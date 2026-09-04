@@ -6,6 +6,7 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+    role: Literal["requirement_vendor", "sourcing_partner", "candidate"] | None = None
 
 
 class RegisterIn(BaseModel):
@@ -15,6 +16,19 @@ class RegisterIn(BaseModel):
     role: Literal["requirement_vendor", "sourcing_partner", "candidate"]
     phone: str | None = None
     profile: dict[str, Any]
+    product_mode: Literal["complete", "basic"] | None = None
+
+    @model_validator(mode="after")
+    def validate_product_selection(self):
+        if self.role != "requirement_vendor" and self.product_mode is not None:
+            raise ValueError("Product mode is only available to Employer/Vendor accounts")
+        if self.product_mode == "basic":
+            required = ["company_name", "country", "city", "company_type", "company_size", "industry", "description", "hiring_requirements"]
+            if any(not str(self.profile.get(key) or "").strip() for key in required) or not (self.phone or "").strip():
+                raise ValueError("Complete the employer contact, company and hiring profile")
+            if self.profile.get("consent_accepted") is not True:
+                raise ValueError("Employer profile consent must be accepted")
+        return self
 
 
 class RequirementIn(BaseModel):

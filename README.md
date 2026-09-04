@@ -6,6 +6,8 @@ This repository is independent from the existing HireScoreAI frontend and backen
 
 ## Implemented
 
+- Employer Complete/Basic selection with the same local dashboard and server-enforced product entitlements. See `docs/EMPLOYER_PRODUCT_MODES.md`.
+
 - Three-role registration, login, dashboards, backend role checks, and client tenant isolation.
 - US/India-aware requirements with configurable submission fields and immutable commercial-term versions.
 - Partner specialization onboarding, ranked requirement matching, work acceptance, and inventory.

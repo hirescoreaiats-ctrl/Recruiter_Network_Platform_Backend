@@ -25,7 +25,7 @@ from .schemas import (
     PayoutStatusIn, PlacementStatusIn, RegisterIn, RequirementIn, StatusIn, SubmissionIn,
 )
 from .serializers import candidate_out, requirement_out
-from .services.evaluation import get_evaluation_adapter
+from .services.product_access import evaluation_adapter_for_requirement, require_company_feature, user_payload
 from .services.matching import candidate_requirement_match, partner_requirement_match
 
 logging.basicConfig(level=logging.INFO)
@@ -148,6 +148,11 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
         if any(not p.get(x) for x in required):
             raise HTTPException(422, "Company name, country, city and company type are required")
         company = Company(name=p["company_name"], website=p.get("website"), country=p["country"], city=p["city"], company_type=p["company_type"], linkedin_url=p.get("linkedin_url"), description=p.get("description"), created_by_user_id=user.id)
+        company.product_mode = data.product_mode or "complete"
+        company.company_size = p.get("company_size")
+        company.industry = p.get("industry")
+        company.hiring_requirements = p.get("hiring_requirements")
+        company.consent_accepted_at = datetime.now(timezone.utc) if p.get("consent_accepted") is True else None
         db.add(company); db.flush(); db.add(CompanyMember(company_id=company.id, user_id=user.id, member_role="owner"))
     elif data.role == "sourcing_partner":
         if not p.get("country") or not p.get("city"):
@@ -162,7 +167,7 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
         db.add(CandidateAvailability(candidate_profile_id=candidate.id, status=p.get("availability_status", "unknown")))
     audit(db, user.id, "user.registered", "user", user.id, {"role": user.role})
     db.commit()
-    return {"access_token": token_for(user), "token_type": "bearer", "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role}}
+    return {"access_token": token_for(user), "token_type": "bearer", "user": user_payload(db, user)}
 
 
 @app.post("/api/auth/login")
@@ -170,12 +175,33 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(func.lower(User.email) == data.email.lower()))
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Incorrect email or password")
-    return {"access_token": token_for(user), "token_type": "bearer", "user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role}}
+    if not user.is_active:
+        raise HTTPException(403, "Account unavailable")
+    if data.role is not None and data.role != user.role:
+        raise HTTPException(403, "Select the account type used when you registered")
+    return {"access_token": token_for(user), "token_type": "bearer", "user": user_payload(db, user)}
 
 
 @app.get("/api/auth/me")
-def me(user: User = Depends(current_user)):
-    return {"id": user.id, "name": user.name, "email": user.email, "phone": user.phone, "role": user.role}
+def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return user_payload(db, user)
+
+
+@app.get("/api/vendor/profile")
+def employer_profile(user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    company = company_for(db, user.id)
+    return {**user_payload(db, user), "company_name": company.name, "website": company.website,
+            "company_type": company.company_type, "country": company.country, "city": company.city,
+            "company_size": company.company_size, "industry": company.industry,
+            "description": company.description, "hiring_requirements": company.hiring_requirements,
+            "consent_accepted": company.consent_accepted_at is not None}
+
+
+@app.post("/api/vendor/ai/{feature}")
+def employer_ai_feature(feature: str, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    require_company_feature(company_for(db, user.id), feature)
+    # A local mode choice must not silently enable a production integration.
+    raise HTTPException(503, "The paid AI provider is not connected in this local project. No model call was made.")
 
 
 @app.post("/api/requirements", status_code=201)
@@ -456,7 +482,7 @@ def submit_candidate(requirement_id: int, payload: SubmissionIn | None = None, c
         interest_status = "interested" if submission_data.get("candidate_interest_confirmation") is True else "pending"
         interest = CandidateInterest(candidate_profile_id=candidate.id, requirement_id=requirement_id, status=interest_status, confirmed_at=datetime.now(timezone.utc) if interest_status == "interested" else None, confirmed_by_user_id=user.id if interest_status == "interested" else None)
         db.add(interest)
-    adapter = get_evaluation_adapter()
+    adapter = evaluation_adapter_for_requirement(db, requirement)
     result = adapter.evaluate(requirement_out(requirement), candidate_out(candidate))
     db.add(CandidateEvaluation(application_id=a.id, version=1, provider=adapter.provider, provider_version=adapter.version, score=result["final_score"], rank_score=result["rank_score"], fit_band=result["fit_band"], recommendation=result["recommendation"], confidence_score=result["confidence_score"], result_json=json.dumps(result)))
     eligibility_status = "compatible" if candidate.country == requirement.country else "needs_review"
@@ -517,7 +543,7 @@ def apply(requirement_id: int, user: User = Depends(require_role("candidate")), 
         db.flush()
         interest = db.scalar(select(CandidateInterest).where(CandidateInterest.candidate_profile_id == c.id, CandidateInterest.requirement_id == r.id))
         if not interest: db.add(CandidateInterest(candidate_profile_id=c.id, requirement_id=r.id, status="interested", confirmed_at=datetime.now(timezone.utc), confirmed_by_user_id=user.id))
-        adapter = get_evaluation_adapter(); result = adapter.evaluate(requirement_out(r), candidate_out(c))
+        adapter = evaluation_adapter_for_requirement(db, r); result = adapter.evaluate(requirement_out(r), candidate_out(c))
         db.add(CandidateEvaluation(application_id=a.id, version=1, provider=adapter.provider, provider_version=adapter.version, score=result["final_score"], rank_score=result["rank_score"], fit_band=result["fit_band"], recommendation=result["recommendation"], confidence_score=result["confidence_score"], result_json=json.dumps(result)))
         db.add(CandidateEligibility(application_id=a.id, status="compatible" if c.country == r.country else "needs_review", details_json=json.dumps({"candidate_country": c.country, "requirement_country": r.country})))
         db.add(Placement(application_id=a.id))
