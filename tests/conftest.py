@@ -19,9 +19,11 @@ def client(tmp_path):
         try: yield db
         finally: db.close()
     app.dependency_overrides[get_db]=override
-    old=settings.upload_dir; settings.upload_dir=tmp_path/'uploads'
+    old=settings.upload_dir; old_pictures=settings.profile_picture_dir
+    settings.upload_dir=tmp_path/'uploads'; settings.profile_picture_dir=tmp_path/'profile-pictures'
     with TestClient(app) as c: yield c
-    settings.upload_dir=old; app.dependency_overrides.clear(); Base.metadata.drop_all(engine)
+    settings.upload_dir=old; settings.profile_picture_dir=old_pictures
+    app.dependency_overrides.clear(); Base.metadata.drop_all(engine)
 
 
 def register(client, role, email, profile):
@@ -31,4 +33,3 @@ def register(client, role, email, profile):
 
 
 def auth(token): return {"Authorization":f"Bearer {token}"}
-

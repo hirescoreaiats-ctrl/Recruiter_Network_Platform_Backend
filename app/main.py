@@ -524,6 +524,43 @@ def candidate_profile(user: User = Depends(require_role("candidate")), db: Sessi
     return result
 
 
+def candidate_picture_path(user_id: int) -> Path | None:
+    for ext in (".jpg", ".png", ".webp"):
+        path = settings.profile_picture_dir / f"{user_id}{ext}"
+        if path.exists(): return path
+    return None
+
+
+@app.get("/api/candidate/profile-picture")
+def candidate_profile_picture(user: User = Depends(require_role("candidate"))):
+    path = candidate_picture_path(user.id)
+    if not path: raise HTTPException(404, "Profile picture not found")
+    media_types = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+    return FileResponse(path, media_type=media_types[path.suffix])
+
+
+@app.post("/api/candidate/profile-picture")
+async def upload_candidate_profile_picture(file: UploadFile = File(...), user: User = Depends(require_role("candidate"))):
+    content = await file.read(settings.max_profile_picture_bytes + 1)
+    if not content: raise HTTPException(422, "Profile picture is empty")
+    if len(content) > settings.max_profile_picture_bytes: raise HTTPException(413, "Profile picture must be 2 MB or smaller")
+    signatures = [
+        (content.startswith(b"\xff\xd8\xff"), ".jpg", "image/jpeg"),
+        (content.startswith(b"\x89PNG\r\n\x1a\n"), ".png", "image/png"),
+        (content.startswith(b"RIFF") and content[8:12] == b"WEBP", ".webp", "image/webp"),
+    ]
+    detected = next(((ext, media_type) for valid, ext, media_type in signatures if valid), None)
+    if not detected: raise HTTPException(422, "Profile picture must be a JPG, PNG or WebP image")
+    ext, media_type = detected
+    settings.profile_picture_dir.mkdir(parents=True, exist_ok=True)
+    for old_ext in (".jpg", ".png", ".webp"):
+        old_path = settings.profile_picture_dir / f"{user.id}{old_ext}"
+        if old_path.exists(): old_path.unlink()
+    path = settings.profile_picture_dir / f"{user.id}{ext}"
+    path.write_bytes(content)
+    return {"content_type": media_type, "size_bytes": len(content)}
+
+
 @app.put("/api/candidate/profile")
 def update_candidate_profile(data: CandidateProfileIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
     c = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
