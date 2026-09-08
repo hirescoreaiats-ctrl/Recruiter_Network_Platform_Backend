@@ -98,6 +98,35 @@ def test_candidate_agent_saves_preference_when_no_job_matches(client):
     assert status["job_preference"]["query"] == "Find remote Rust jobs for me"
 
 
+def test_candidate_conversational_agent_uses_live_workspace_tools(client):
+    vendor = register(client, "requirement_vendor", "vendor-agent-chat@example.com", VENDOR)
+    candidate = register(client, "candidate", "candidate-agent-chat@example.com", CANDIDATE_ACCOUNT)
+    client.post("/api/requirements", headers=auth(vendor["access_token"]), json=REQ)
+    headers = auth(candidate["access_token"])
+
+    readiness = client.post("/api/candidate/agent/chat", headers=headers, json={"message": "What should I complete next?"})
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["intent"] == "profile_readiness"
+    assert readiness.json()["actions"][0]["route"] == "/candidate/resume"
+
+    search = client.post("/api/candidate/agent/chat", headers=headers, json={"message": "Scan my best Java roles"})
+    assert search.status_code == 200, search.text
+    assert search.json()["intent"] == "match_search"
+    assert search.json()["agent_state"]["requirements_monitored"] == 1
+    assert "resume" in search.json()["reply"].lower()
+
+    profile = client.get("/api/candidate/profile", headers=headers).json()
+    client.post(f"/api/candidates/{profile['id']}/resume", headers=headers,
+                files={"file": ("resume.pdf", b"%PDF Java Spring Boot AWS", "application/pdf")})
+    matched = client.post("/api/candidate/agent/chat", headers=headers, json={"message": "Scan my best recruiter matches"})
+    assert matched.status_code == 200
+    assert matched.json()["matches"][0]["title"] == "Senior Java Developer"
+    assert matched.json()["actions"][0]["route"] == "/candidate/matches"
+
+    empty = client.post("/api/candidate/agent/chat", headers=headers, json={"message": ""})
+    assert empty.status_code == 422
+
+
 def test_candidate_profile_requires_country_specific_fields(client):
     candidate = register(client, "candidate", "candidate-country@example.com", CANDIDATE_ACCOUNT)
     base = {

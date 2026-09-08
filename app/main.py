@@ -677,7 +677,7 @@ def candidate_agent_search(payload: dict, user: User = Depends(require_role("can
         "resume": bool(candidate.resume_file_id),
     }
     completion = round(sum(checks.values()) / len(checks) * 100)
-    stop_words = {"find", "search", "job", "jobs", "role", "roles", "for", "me", "my", "mere", "meri", "liye", "dhundo", "karo", "please"}
+    stop_words = {"find", "search", "scan", "best", "job", "jobs", "role", "roles", "match", "matches", "recruiter", "opportunity", "opportunities", "for", "me", "my", "mere", "meri", "liye", "dhundo", "karo", "please"}
     query_tokens = {token.strip(".,!?()[]").casefold() for token in query_text.split() if len(token.strip(".,!?()[]")) > 2}
     query_tokens -= stop_words
     requirements = db.scalars(select(Requirement).where(Requirement.status == "active").order_by(Requirement.created_at.desc())).all()
@@ -736,6 +736,86 @@ def candidate_agent_search(payload: dict, user: User = Depends(require_role("can
             if matches else
             "No strong match found. Your job preference is now saved and continuous monitoring is active."
         ),
+    }
+
+
+@app.post("/api/candidate/agent/chat")
+def candidate_agent_chat(payload: dict, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    message = str(payload.get("message") or "").strip()[:500]
+    if not message: raise HTTPException(422, "Message is required")
+    candidate = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if not candidate: raise HTTPException(404, "Candidate profile not found")
+    status = candidate_matching_status(user, db)
+    checks = status["profile_checks"]
+    missing = [key for key, complete in checks.items() if not complete]
+    query = message.casefold()
+    actions = []
+    matches = []
+    intent = "career_guidance"
+
+    if re.search(r"\b(hi|hello|hey|hii|namaste)\b", query) and len(query.split()) <= 4:
+        reply = f"Hi {candidate.full_name.split()[0]}! I’m your HireScoreAI Career Agent. I can inspect your profile readiness, resume, availability and live recruiter matches. What would you like me to check?"
+        actions = [{"label": "Check my profile", "route": "/candidate/profile"}, {"label": "Scan my matches", "prompt": "Scan recruiter requirements for my best matches"}]
+        intent = "greeting"
+    elif re.search(r"\b(match|matches|opportunit|job|role|scan|search|dhund|find)\w*\b", query):
+        result = candidate_agent_search({"query": message}, user, db)
+        matches = result["matches"][:3]
+        intent = "match_search"
+        if missing:
+            labels = {"profile": "professional profile", "resume": "resume", "availability": "availability"}
+            reply = "I checked your workspace, but matching is not fully active yet. Complete " + ", ".join(labels[item] for item in missing) + ", then I can evaluate every active recruiter requirement with confidence."
+            route_map = {"profile": "/candidate/profile", "resume": "/candidate/resume", "availability": "/candidate/availability"}
+            actions = [{"label": f"Complete {labels[item]}", "route": route_map[item]} for item in missing[:2]]
+        elif matches:
+            reply = f"I scanned {result['requirements_scanned']} active recruiter requirements and found {len(matches)} strong profile fit{'s' if len(matches) != 1 else ''}. I’ve shown the best results below; no application or profile sharing has happened."
+            actions = [{"label": "Open all AI matches", "route": "/candidate/matches"}]
+        else:
+            reply = f"I scanned {result['requirements_scanned']} active recruiter requirements and did not find a strong fit yet. I saved your preference and will keep monitoring new requirements automatically."
+            actions = [{"label": "Improve matching profile", "route": "/candidate/profile"}]
+    elif re.search(r"\b(resume|cv)\b", query):
+        intent = "resume_check"
+        if checks["resume"]:
+            reply = "Your resume is uploaded and linked to your profile. Keep it current when your experience, projects or skills change; matching also uses your structured profile fields."
+            actions = [{"label": "Review my resume", "route": "/candidate/resume"}]
+        else:
+            reply = "Your resume is the missing evidence signal. Upload a PDF, DOC or DOCX file to activate complete matching."
+            actions = [{"label": "Upload resume", "route": "/candidate/resume"}]
+    elif re.search(r"\b(available|availability|notice|start|joining)\w*\b", query):
+        intent = "availability_check"
+        labels = {"actively_looking": "actively looking", "open_to_right_opportunity": "open to the right opportunity", "not_looking": "not looking right now"}
+        current = labels.get(status["availability"].get("status"), "not set")
+        reply = f"Your current availability is {current}. This signal controls whether the matching engine surfaces new opportunities; it does not change your evidence-based fit score."
+        actions = [{"label": "Update availability", "route": "/candidate/availability"}]
+    elif re.search(r"\b(profile|ready|readiness|missing|complete|improve|next)\w*\b", query):
+        intent = "profile_readiness"
+        completion = round(sum(checks.values()) / 3 * 100)
+        if not missing:
+            reply = f"Your matching setup is {completion}% ready: profile, resume and availability are all complete. Keep your skills, target roles and market preferences current for the most precise matches."
+            actions = [{"label": "Review profile", "route": "/candidate/profile"}, {"label": "Check matches", "route": "/candidate/matches"}]
+        else:
+            labels = {"profile": "professional profile", "resume": "resume", "availability": "availability"}
+            route_map = {"profile": "/candidate/profile", "resume": "/candidate/resume", "availability": "/candidate/availability"}
+            reply = f"Your matching setup is {completion}% ready. The next best action is to complete your {labels[missing[0]]}. After that, I’ll re-check your remaining signals automatically."
+            actions = [{"label": f"Complete {labels[item]}", "route": route_map[item]} for item in missing]
+    elif re.search(r"\b(skill|experience|career|strength|qualification)\w*\b", query):
+        intent = "profile_insight"
+        skills = json.loads(candidate.skills or "[]")
+        reply = f"Your profile currently presents you as a {candidate.current_title} with {candidate.total_experience:g} years of experience. Your strongest declared skills are {', '.join(skills[:6]) or 'not yet listed'}. Add specific tools, outcomes and target roles to improve matching precision."
+        actions = [{"label": "Strengthen my profile", "route": "/candidate/profile"}]
+    elif re.search(r"\b(private|privacy|share|consent|apply|application)\w*\b", query):
+        intent = "privacy"
+        reply = "This workspace does not provide a public job feed or submit applications from this conversation. I can evaluate profile fits and guide your setup; your UI will clearly show any recruiter workflow activity."
+        actions = [{"label": "View matching activity", "route": "/candidate/matches"}]
+    else:
+        reply = "I can inspect your live profile, explain what is missing, check your resume or availability, and scan recruiter requirements for strong matches. Try asking, “What should I complete next?”"
+        actions = [{"label": "What should I complete next?", "prompt": "What should I complete next?"}, {"label": "Scan my matches", "prompt": "Scan my best recruiter matches"}]
+
+    return {
+        "reply": reply,
+        "intent": intent,
+        "actions": actions,
+        "matches": matches,
+        "agent_state": {"status": status["agent_status"], "requirements_monitored": status["active_requirements_monitored"], "profile_checks": checks},
     }
 
 
