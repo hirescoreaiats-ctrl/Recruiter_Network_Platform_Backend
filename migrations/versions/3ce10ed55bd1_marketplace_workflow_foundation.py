@@ -279,7 +279,7 @@ def upgrade() -> None:
             (requirement_id, version, fields_json, is_active, created_by_user_id, created_at)
         SELECT r.id, 1,
             '[{"key":"resume","label":"Resume","required":true},{"key":"candidate_name","label":"Candidate name","required":true},{"key":"email","label":"Email","required":true},{"key":"phone","label":"Phone","required":true}]',
-            1, r.created_by_user_id, r.created_at
+            TRUE, r.created_by_user_id, r.created_at
         FROM requirements r
         WHERE NOT EXISTS (SELECT 1 FROM requirement_submission_schemas s WHERE s.requirement_id = r.id)
     """)
@@ -288,7 +288,7 @@ def upgrade() -> None:
             (requirement_id, version, payout_model, payout_amount, currency, payment_trigger,
              payment_timeline_days, replacement_period_days, notes, is_active, created_by_user_id, created_at)
         SELECT r.id, 1, 'fixed', 0, COALESCE(r.currency, CASE WHEN r.country = 'IN' THEN 'INR' ELSE 'USD' END),
-            'candidate_joined', 30, 0, 'Backfilled local development terms; client review required.', 1,
+            'candidate_joined', 30, 0, 'Backfilled local development terms; client review required.', TRUE,
             r.created_by_user_id, r.created_at
         FROM requirements r
         WHERE NOT EXISTS (SELECT 1 FROM requirement_commercial_terms t WHERE t.requirement_id = r.id)
