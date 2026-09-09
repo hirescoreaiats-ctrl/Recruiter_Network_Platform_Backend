@@ -90,13 +90,31 @@ class CandidateProfileIn(CandidateIn):
             raise ValueError("Select whether you are a fresher or an experienced professional")
         if not self.country_specific_data.get("highest_qualification"):
             raise ValueError("Highest qualification is required")
+        education_history = self.country_specific_data.get("education_history")
+        if education_history is not None:
+            if not isinstance(education_history, list) or not education_history:
+                raise ValueError("Add at least one education record")
+            required_education = {"qualification", "institution_name", "course", "specialization", "end_year"}
+            for record in education_history:
+                if not isinstance(record, dict) or any(not str(record.get(field) or "").strip() for field in required_education):
+                    raise ValueError("Each education record needs qualification, institution, course, specialization and completion year")
+        work_experiences = self.country_specific_data.get("work_experiences")
+        if work_experiences is not None:
+            if not isinstance(work_experiences, list):
+                raise ValueError("Work experience history must be a list")
+            required_experience = {"company_name", "job_title", "start_date"}
+            for record in work_experiences:
+                if not isinstance(record, dict) or any(not str(record.get(field) or "").strip() for field in required_experience):
+                    raise ValueError("Each work experience needs company, job title and start date")
+                if not record.get("is_current") and not str(record.get("end_date") or "").strip():
+                    raise ValueError("Previous work experience needs an end date")
         if career_stage == "fresher":
             if self.total_experience != 0:
                 raise ValueError("Fresher experience must be 0 years")
             if not self.country_specific_data.get("education_specialization") or not self.country_specific_data.get("graduation_year"):
                 raise ValueError("Education specialization and graduation year are required for freshers")
-        elif not self.current_employer:
-            raise ValueError("Current or most recent employer is required for experienced professionals")
+        elif not self.current_employer and not work_experiences:
+            raise ValueError("Add at least one work experience for experienced professionals")
         required_by_country = {
             "IN": ["preferred_location", "notice_period", "current_ctc", "expected_ctc", "work_mode_preference"],
             "US": ["state", "work_authorization", "availability", "relocation_preference", "work_mode_preference", "employment_preference", "expected_rate", "rate_type"],

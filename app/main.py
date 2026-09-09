@@ -610,8 +610,30 @@ def candidate_profile_is_complete(candidate: CandidateProfile) -> bool:
     required = required_by_country.get(candidate.country, ["preferred_location", "availability", "work_mode_preference"])
     distinct_skills = {str(skill).strip().casefold() for skill in skills if str(skill).strip()}
     career_stage = country_data.get("career_stage")
+    education_history = country_data.get("education_history")
+    education_ready = bool(
+        isinstance(education_history, list)
+        and education_history
+        and all(
+            isinstance(record, dict)
+            and all(str(record.get(field) or "").strip() for field in ("qualification", "institution_name", "course", "specialization", "end_year"))
+            for record in education_history
+        )
+    ) or bool(country_data.get("highest_qualification") and country_data.get("education_specialization") and country_data.get("graduation_year"))
+    work_experiences = country_data.get("work_experiences")
+    experience_history_ready = bool(
+        isinstance(work_experiences, list)
+        and work_experiences
+        and all(
+            isinstance(record, dict)
+            and all(str(record.get(field) or "").strip() for field in ("company_name", "job_title", "start_date"))
+            and (record.get("is_current") or str(record.get("end_date") or "").strip())
+            for record in work_experiences
+        )
+    )
     career_ready = bool(
         country_data.get("highest_qualification")
+        and education_ready
         and (
             (
                 career_stage == "fresher"
@@ -619,7 +641,7 @@ def candidate_profile_is_complete(candidate: CandidateProfile) -> bool:
                 and country_data.get("education_specialization")
                 and country_data.get("graduation_year")
             )
-            or (career_stage == "experienced" and candidate.current_employer)
+            or (career_stage == "experienced" and (experience_history_ready or candidate.current_employer))
         )
     )
     base_ready = bool(candidate.full_name and candidate.email and candidate.phone and candidate.country and candidate.city and candidate.current_title and candidate.total_experience is not None and len(distinct_skills) >= 3 and career_ready)

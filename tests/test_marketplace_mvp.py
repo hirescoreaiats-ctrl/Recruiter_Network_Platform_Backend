@@ -44,7 +44,10 @@ def complete_candidate_profile_and_availability(client, token):
         "country": profile["country"], "city": profile["city"], "current_title": profile["current_title"],
         "total_experience": profile["total_experience"], "skills": profile["skills"],
         "linkedin_url": profile["linkedin_url"], "current_employer": profile["current_employer"],
-        "country_specific_data": profile["country_specific_data"],
+        "country_specific_data": {**profile["country_specific_data"], "education_history": [{
+            "qualification": "Graduation", "institution_name": "Example University",
+            "course": "BTech", "specialization": "Computer Science", "end_year": "2016",
+        }]},
     })
     assert saved.status_code == 200
     availability = client.put(
@@ -121,6 +124,36 @@ def test_candidate_profile_quality_rules_support_freshers(client):
     assert saved.status_code == 200
     status = client.get("/api/candidate/matching-status", headers=headers).json()
     assert status["profile_checks"]["profile"] is True
+
+
+def test_candidate_profile_stores_multiple_education_and_experience_records(client):
+    candidate = register(client, "candidate", "candidate-history@example.com", CANDIDATE_ACCOUNT)
+    headers = auth(candidate["access_token"])
+    profile = client.get("/api/candidate/profile", headers=headers).json()
+    education_history = [
+        {"qualification": "Bachelor’s degree", "institution_type": "University", "institution_name": "University of Delhi", "course": "B.Sc.", "specialization": "Computer Science", "start_year": "2016", "end_year": "2019", "score": "8.2 CGPA"},
+        {"qualification": "Master’s degree", "institution_type": "University", "institution_name": "IIT Delhi", "course": "M.Tech", "specialization": "Computer Science", "start_year": "2019", "end_year": "2021", "score": "8.8 CGPA"},
+    ]
+    work_experiences = [
+        {"company_name": "Example Technologies", "job_title": "Software Engineer", "employment_type": "Full-Time", "start_date": "2021-07", "end_date": "2024-01", "is_current": False, "location": "Bengaluru"},
+        {"company_name": "Acme Systems", "job_title": "Senior Engineer", "employment_type": "Full-Time", "start_date": "2024-02", "end_date": "", "is_current": True, "location": "Remote"},
+    ]
+    saved = client.put("/api/candidate/profile", headers=headers, json={
+        "full_name": profile["full_name"], "email": profile["email"], "phone": profile["phone"],
+        "country": "IN", "city": profile["city"], "current_title": "Senior Engineer",
+        "total_experience": 5, "skills": ["Python", "FastAPI", "SQL"], "current_employer": "Acme Systems",
+        "country_specific_data": {
+            "career_stage": "experienced", "highest_qualification": "Master’s degree",
+            "education_specialization": "Computer Science", "graduation_year": "2021",
+            "education_history": education_history, "work_experiences": work_experiences,
+            "preferred_location": "Bengaluru", "notice_period": "30 days", "current_ctc": "18 LPA",
+            "expected_ctc": "24 LPA", "work_mode_preference": "Hybrid",
+        },
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["country_specific_data"]["education_history"] == education_history
+    assert saved.json()["country_specific_data"]["work_experiences"] == work_experiences
+    assert client.get("/api/candidate/matching-status", headers=headers).json()["profile_checks"]["profile"] is True
 
 
 def test_candidate_agent_saves_preference_when_no_job_matches(client):
