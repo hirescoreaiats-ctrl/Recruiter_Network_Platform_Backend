@@ -36,6 +36,25 @@ def create_partner_candidate(client, token, email="talent@example.com", phone="9
     return candidate
 
 
+def complete_candidate_profile_and_availability(client, token):
+    headers = auth(token)
+    profile = client.get("/api/candidate/profile", headers=headers).json()
+    saved = client.put("/api/candidate/profile", headers=headers, json={
+        "full_name": profile["full_name"], "email": profile["email"], "phone": profile["phone"],
+        "country": profile["country"], "city": profile["city"], "current_title": profile["current_title"],
+        "total_experience": profile["total_experience"], "skills": profile["skills"],
+        "linkedin_url": profile["linkedin_url"], "current_employer": profile["current_employer"],
+        "country_specific_data": profile["country_specific_data"],
+    })
+    assert saved.status_code == 200
+    availability = client.put(
+        f"/api/candidates/{profile['id']}/availability", headers=headers,
+        json={"status": "actively_looking", "available_from": None},
+    )
+    assert availability.status_code == 200
+    return profile
+
+
 def test_vendor_can_browse_and_search_sourcing_partners(client):
     vendor = register(client, "requirement_vendor", "vendor-browse@example.com", VENDOR)
     register(client, "sourcing_partner", "java-partner@example.com", PARTNER)
@@ -63,10 +82,12 @@ def test_candidate_passive_matching_requires_ready_profile(client):
 
     waiting = client.get("/api/candidate/matching-status", headers=auth(candidate["access_token"]))
     assert waiting.status_code == 200
+    assert waiting.json()["profile_checks"]["profile"] is False
+    assert waiting.json()["profile_checks"]["availability"] is False
     assert waiting.json()["profile_checks"]["resume"] is False
     assert waiting.json()["matches"] == []
 
-    profile = client.get("/api/candidate/profile", headers=auth(candidate["access_token"])).json()
+    profile = complete_candidate_profile_and_availability(client, candidate["access_token"])
     uploaded = client.post(
         f"/api/candidates/{profile['id']}/resume",
         headers=auth(candidate["access_token"]),
@@ -103,6 +124,7 @@ def test_candidate_conversational_agent_uses_live_workspace_tools(client):
     candidate = register(client, "candidate", "candidate-agent-chat@example.com", CANDIDATE_ACCOUNT)
     client.post("/api/requirements", headers=auth(vendor["access_token"]), json=REQ)
     headers = auth(candidate["access_token"])
+    profile = complete_candidate_profile_and_availability(client, candidate["access_token"])
 
     readiness = client.post("/api/candidate/agent/chat", headers=headers, json={"message": "What should I complete next?"})
     assert readiness.status_code == 200, readiness.text
@@ -115,7 +137,6 @@ def test_candidate_conversational_agent_uses_live_workspace_tools(client):
     assert search.json()["agent_state"]["requirements_monitored"] == 1
     assert "resume" in search.json()["reply"].lower()
 
-    profile = client.get("/api/candidate/profile", headers=headers).json()
     client.post(f"/api/candidates/{profile['id']}/resume", headers=headers,
                 files={"file": ("resume.pdf", b"%PDF Java Spring Boot AWS", "application/pdf")})
     matched = client.post("/api/candidate/agent/chat", headers=headers, json={"message": "Scan my best recruiter matches"})

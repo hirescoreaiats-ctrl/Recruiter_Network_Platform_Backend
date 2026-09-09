@@ -25,11 +25,12 @@ def requirement_out(r: Requirement, company: Company | None = None):
 
 
 def candidate_out(c: CandidateProfile):
+    country_data = {key: value for key, value in loads(c.country_specific_data, {}).items() if not key.startswith("_")}
     return {
         "id": c.id, "user_id": c.user_id, "full_name": c.full_name, "email": c.email,
         "phone": c.phone, "country": c.country, "city": c.city,
         "current_title": c.current_title, "total_experience": c.total_experience,
         "skills": loads(c.skills, []), "linkedin_url": c.linkedin_url,
-        "current_employer": c.current_employer, "country_specific_data": loads(c.country_specific_data, {}),
+        "current_employer": c.current_employer, "country_specific_data": country_data,
         "resume_file_id": c.resume_file_id, "created_at": c.created_at.isoformat(),
     }

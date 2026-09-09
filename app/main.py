@@ -564,7 +564,9 @@ async def upload_candidate_profile_picture(file: UploadFile = File(...), user: U
 @app.put("/api/candidate/profile")
 def update_candidate_profile(data: CandidateProfileIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
     c = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
-    for k,v in data.model_dump().items(): setattr(c, k, json.dumps(v) if k in {"skills", "country_specific_data"} else v)
+    values = data.model_dump()
+    values["country_specific_data"] = {**values["country_specific_data"], "_profile_completed": True}
+    for k,v in values.items(): setattr(c, k, json.dumps(v) if k in {"skills", "country_specific_data"} else v)
     audit(db, user.id, "candidate.profile_updated", "candidate", c.id, {"country": c.country})
     db.commit(); return candidate_out(c)
 
@@ -607,7 +609,17 @@ def candidate_profile_is_complete(candidate: CandidateProfile) -> bool:
     }
     required = required_by_country.get(candidate.country, ["preferred_location", "availability", "work_mode_preference"])
     base_ready = bool(candidate.full_name and candidate.email and candidate.phone and candidate.country and candidate.city and candidate.current_title and candidate.total_experience is not None and skills)
-    return base_ready and all(country_data.get(field) not in (None, "") for field in required)
+    explicitly_saved = country_data.get("_profile_completed") is True
+    return explicitly_saved and base_ready and all(country_data.get(field) not in (None, "") for field in required)
+
+
+def candidate_availability_is_complete(availability: CandidateAvailability | None) -> bool:
+    return bool(
+        availability
+        and availability.last_confirmed_at
+        and availability.confirmed_by
+        and availability.status in {"actively_looking", "open_to_right_opportunity"}
+    )
 
 
 @app.get("/api/candidate/matching-status")
@@ -618,7 +630,7 @@ def candidate_matching_status(user: User = Depends(require_role("candidate")), d
     availability = db.get(CandidateAvailability, candidate.id)
     profile_checks = {
         "profile": candidate_profile_is_complete(candidate),
-        "availability": bool(availability and availability.status in {"actively_looking", "open_to_right_opportunity"}),
+        "availability": candidate_availability_is_complete(availability),
         "resume": bool(candidate.resume_file_id),
     }
     ready = all(profile_checks.values())
@@ -673,7 +685,7 @@ def candidate_agent_search(payload: dict, user: User = Depends(require_role("can
     skills = json.loads(candidate.skills or "[]")
     checks = {
         "profile": candidate_profile_is_complete(candidate),
-        "availability": bool(availability and availability.status in {"actively_looking", "open_to_right_opportunity"}),
+        "availability": candidate_availability_is_complete(availability),
         "resume": bool(candidate.resume_file_id),
     }
     completion = round(sum(checks.values()) / len(checks) * 100)
