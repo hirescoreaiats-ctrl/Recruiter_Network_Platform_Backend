@@ -82,6 +82,21 @@ class CandidateIn(BaseModel):
 class CandidateProfileIn(CandidateIn):
     @model_validator(mode="after")
     def validate_country_details(self):
+        distinct_skills = {skill.strip().casefold() for skill in self.skills if skill.strip()}
+        if len(distinct_skills) < 3:
+            raise ValueError("Add at least 3 distinct skills so matching can identify suitable requirements")
+        career_stage = self.country_specific_data.get("career_stage")
+        if career_stage not in {"fresher", "experienced"}:
+            raise ValueError("Select whether you are a fresher or an experienced professional")
+        if not self.country_specific_data.get("highest_qualification"):
+            raise ValueError("Highest qualification is required")
+        if career_stage == "fresher":
+            if self.total_experience != 0:
+                raise ValueError("Fresher experience must be 0 years")
+            if not self.country_specific_data.get("education_specialization") or not self.country_specific_data.get("graduation_year"):
+                raise ValueError("Education specialization and graduation year are required for freshers")
+        elif not self.current_employer:
+            raise ValueError("Current or most recent employer is required for experienced professionals")
         required_by_country = {
             "IN": ["preferred_location", "notice_period", "current_ctc", "expected_ctc", "work_mode_preference"],
             "US": ["state", "work_authorization", "availability", "relocation_preference", "work_mode_preference", "employment_preference", "expected_rate", "rate_type"],

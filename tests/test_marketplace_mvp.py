@@ -8,7 +8,7 @@ PARTNER = {
     "role_specializations": ["Senior Java Developer"], "locations": ["Bengaluru"],
     "employment_expertise": ["Full-Time"],
 }
-CANDIDATE_ACCOUNT = {"country": "IN", "city": "Bengaluru", "current_title": "Senior Java Developer", "total_experience": 8, "skills": ["Java", "Spring Boot", "AWS"], "availability_status": "actively_looking", "country_specific_data": {"preferred_location": "Bengaluru", "notice_period": "30 days", "current_ctc": "18 LPA", "expected_ctc": "24 LPA", "work_mode_preference": "Hybrid"}}
+CANDIDATE_ACCOUNT = {"country": "IN", "city": "Bengaluru", "current_title": "Senior Java Developer", "total_experience": 8, "skills": ["Java", "Spring Boot", "AWS"], "availability_status": "actively_looking", "current_employer": "Example Technologies", "country_specific_data": {"career_stage": "experienced", "highest_qualification": "Bachelor’s degree", "preferred_location": "Bengaluru", "notice_period": "30 days", "current_ctc": "18 LPA", "expected_ctc": "24 LPA", "work_mode_preference": "Hybrid"}}
 REQ = {
     "title": "Senior Java Developer", "description": "Build resilient Spring Boot services for a banking platform.",
     "country": "IN", "state_region": "Karnataka", "city": "Bengaluru", "work_mode": "Hybrid",
@@ -100,6 +100,29 @@ def test_candidate_passive_matching_requires_ready_profile(client):
     assert ready["matches"][0]["email_alert_status"] == "preview_ready"
 
 
+def test_candidate_profile_quality_rules_support_freshers(client):
+    candidate = register(client, "candidate", "candidate-fresher@example.com", CANDIDATE_ACCOUNT)
+    headers = auth(candidate["access_token"])
+    profile = client.get("/api/candidate/profile", headers=headers).json()
+    payload = {
+        "full_name": profile["full_name"], "email": profile["email"], "phone": profile["phone"],
+        "country": "IN", "city": profile["city"], "current_title": "Junior Data Analyst",
+        "total_experience": 0, "skills": ["SQL", "Excel"], "current_employer": None,
+        "country_specific_data": {
+            "career_stage": "fresher", "highest_qualification": "Bachelor’s degree",
+            "education_specialization": "Computer Science", "graduation_year": "2026",
+            "preferred_location": "Bengaluru", "notice_period": "Immediate",
+            "current_ctc": "0", "expected_ctc": "6 LPA", "work_mode_preference": "Hybrid",
+        },
+    }
+    insufficient = client.put("/api/candidate/profile", headers=headers, json=payload)
+    assert insufficient.status_code == 422
+    saved = client.put("/api/candidate/profile", headers=headers, json={**payload, "skills": ["SQL", "Excel", "Power BI"]})
+    assert saved.status_code == 200
+    status = client.get("/api/candidate/matching-status", headers=headers).json()
+    assert status["profile_checks"]["profile"] is True
+
+
 def test_candidate_agent_saves_preference_when_no_job_matches(client):
     vendor = register(client, "requirement_vendor", "vendor-watch@example.com", VENDOR)
     candidate = register(client, "candidate", "candidate-watch@example.com", CANDIDATE_ACCOUNT)
@@ -153,15 +176,17 @@ def test_candidate_profile_requires_country_specific_fields(client):
     base = {
         "full_name": "Taylor Morgan", "email": "candidate-country@example.com", "phone": "5550101",
         "country": "US", "city": "Austin", "current_title": "Data Engineer",
-        "total_experience": 5, "skills": ["Python", "SQL"], "country_specific_data": {},
+        "total_experience": 5, "skills": ["Python", "SQL", "Airflow"],
+        "current_employer": "Data Systems", "country_specific_data": {},
     }
     missing = client.put("/api/candidate/profile", headers=auth(candidate["access_token"]), json=base)
     assert missing.status_code == 422
 
     complete = client.put("/api/candidate/profile", headers=auth(candidate["access_token"]), json={
         **base,
-        "country_specific_data": {
-            "state": "Texas", "work_authorization": "US Citizen", "availability": "2 weeks",
+            "country_specific_data": {
+                "career_stage": "experienced", "highest_qualification": "Bachelor’s degree",
+                "state": "Texas", "work_authorization": "US Citizen", "availability": "2 weeks",
             "relocation_preference": "Open", "work_mode_preference": "Hybrid",
             "employment_preference": "W2", "expected_rate": "80", "rate_type": "Hourly",
         },

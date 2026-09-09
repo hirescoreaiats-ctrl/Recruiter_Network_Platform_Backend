@@ -608,7 +608,21 @@ def candidate_profile_is_complete(candidate: CandidateProfile) -> bool:
         "GB": ["preferred_location", "notice_period", "work_mode_preference"],
     }
     required = required_by_country.get(candidate.country, ["preferred_location", "availability", "work_mode_preference"])
-    base_ready = bool(candidate.full_name and candidate.email and candidate.phone and candidate.country and candidate.city and candidate.current_title and candidate.total_experience is not None and skills)
+    distinct_skills = {str(skill).strip().casefold() for skill in skills if str(skill).strip()}
+    career_stage = country_data.get("career_stage")
+    career_ready = bool(
+        country_data.get("highest_qualification")
+        and (
+            (
+                career_stage == "fresher"
+                and candidate.total_experience == 0
+                and country_data.get("education_specialization")
+                and country_data.get("graduation_year")
+            )
+            or (career_stage == "experienced" and candidate.current_employer)
+        )
+    )
+    base_ready = bool(candidate.full_name and candidate.email and candidate.phone and candidate.country and candidate.city and candidate.current_title and candidate.total_experience is not None and len(distinct_skills) >= 3 and career_ready)
     explicitly_saved = country_data.get("_profile_completed") is True
     return explicitly_saved and base_ready and all(country_data.get(field) not in (None, "") for field in required)
 
