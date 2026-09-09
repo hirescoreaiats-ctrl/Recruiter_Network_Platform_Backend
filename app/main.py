@@ -3,7 +3,9 @@ import logging
 import uuid
 import hashlib
 import re
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
+import httpx
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -21,17 +23,20 @@ from .models import (
     RequirementCommercialTerms, RequirementPartner, RequirementSubmissionSchema, ResumeFile, User,
 )
 from .schemas import (
-    AvailabilityIn, CandidateIn, CandidateProfileIn, ConversationIn, InterestIn, LoginIn, MessageIn,
+    AvailabilityIn, CandidateEducationIn, CandidateEmploymentIn, CandidateIn, CandidatePreferencesIn, CandidateProfileIn,
+    ConversationIn, InterestIn, LoginIn, MessageIn, MobileOtpIn,
     PayoutStatusIn, PlacementStatusIn, RegisterIn, RequirementIn, StatusIn, SubmissionIn,
 )
 from .serializers import candidate_out, requirement_out
 from .services.product_access import evaluation_adapter_for_requirement, require_company_feature, user_payload
 from .services.matching import candidate_requirement_match, partner_requirement_match
+from .services.resume_parser import extract_resume_profile
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("recruitment-network")
 app = FastAPI(title="HireScoreAI Recruitment Network MVP", version="0.2.0")
 app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "static"), name="assets")
+mobile_otp_challenges: dict[int, dict] = {}
 
 
 def audit(db: Session, user_id: int | None, action: str, entity_type: str, entity_id: int | None, details=None):
@@ -159,10 +164,18 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
             raise HTTPException(422, "Country and city are required")
         db.add(PartnerProfile(user_id=user.id, country=p["country"], city=p["city"], agency_name=p.get("agency_name"), website=p.get("website"), linkedin_url=p.get("linkedin_url"), experience_years=p.get("experience_years"), industries=json.dumps(p.get("industries", [])), skill_areas=json.dumps(p.get("skill_areas", [])), hiring_markets=json.dumps(p.get("hiring_markets", [])), recruiter_type=p.get("recruiter_type", "individual"), role_specializations=json.dumps(p.get("role_specializations", [])), locations=json.dumps(p.get("locations", [])), employment_expertise=json.dumps(p.get("employment_expertise", [])), work_authorization_expertise=json.dumps(p.get("work_authorization_expertise", [])), experience_ranges=json.dumps(p.get("experience_ranges", []))))
     else:
-        required = ["country", "city", "current_title", "total_experience", "skills"]
-        if any(p.get(x) in (None, "", []) for x in required):
-            raise HTTPException(422, "Country, city, title, experience and skills are required")
-        candidate = CandidateProfile(user_id=user.id, full_name=data.name, email=data.email.lower(), phone=data.phone or "", country=p["country"], city=p["city"], current_title=p["current_title"], total_experience=float(p["total_experience"]), skills=json.dumps(p["skills"]), linkedin_url=p.get("linkedin_url"), current_employer=p.get("current_employer"), country_specific_data=json.dumps(p.get("country_specific_data", {})), created_by_user_id=user.id)
+        account_only = p.get("onboarding_stage") == "account"
+        if account_only:
+            if p.get("career_stage") not in {"experienced", "fresher"}:
+                raise HTTPException(422, "Select whether you are experienced or a fresher")
+            candidate_data = {"country": "IN", "city": str(p.get("city") or "").strip(), "current_title": "", "total_experience": 0,
+                              "skills": [], "country_specific_data": {"career_stage": p["career_stage"]}}
+        else:
+            required = ["country", "city", "current_title", "total_experience", "skills"]
+            if any(p.get(x) in (None, "", []) for x in required):
+                raise HTTPException(422, "Country, city, title, experience and skills are required")
+            candidate_data = p
+        candidate = CandidateProfile(user_id=user.id, full_name=data.name, email=data.email.lower(), phone=data.phone or "", country=candidate_data["country"], city=candidate_data["city"], current_title=candidate_data["current_title"], total_experience=float(candidate_data["total_experience"]), skills=json.dumps(candidate_data["skills"]), linkedin_url=candidate_data.get("linkedin_url"), current_employer=candidate_data.get("current_employer"), country_specific_data=json.dumps(candidate_data.get("country_specific_data", {})), created_by_user_id=user.id)
         db.add(candidate); db.flush()
         db.add(CandidateAvailability(candidate_profile_id=candidate.id, status=p.get("availability_status", "unknown")))
     audit(db, user.id, "user.registered", "user", user.id, {"role": user.role})
@@ -180,6 +193,121 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     if data.role is not None and data.role != user.role:
         raise HTTPException(403, "Select the account type used when you registered")
     return {"access_token": token_for(user), "token_type": "bearer", "user": user_payload(db, user)}
+
+
+@app.post("/api/auth/mobile-otp/send")
+def send_mobile_otp(user: User = Depends(require_role("candidate"))):
+    if not user.phone:
+        raise HTTPException(422, "Add a mobile number before verification")
+    now = datetime.now(timezone.utc)
+    previous = mobile_otp_challenges.get(user.id)
+    if previous and previous["sent_at"] + timedelta(seconds=30) > now:
+        raise HTTPException(429, "Wait 30 seconds before requesting another code")
+    code = f"{secrets.randbelow(10000):04d}"
+    mobile_otp_challenges[user.id] = {
+        "digest": hashlib.sha256(code.encode()).hexdigest(), "expires_at": now + timedelta(minutes=5),
+        "sent_at": now, "attempts": 0,
+    }
+    configured = all((settings.twilio_account_sid, settings.twilio_auth_token, settings.twilio_from_number))
+    if configured:
+        response = httpx.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json",
+            data={"To": user.phone, "From": settings.twilio_from_number,
+                  "Body": f"Your HireScoreAI verification code is {code}. It expires in 5 minutes."},
+            auth=(settings.twilio_account_sid, settings.twilio_auth_token), timeout=10,
+        )
+        if response.status_code >= 400:
+            mobile_otp_challenges.pop(user.id, None)
+            raise HTTPException(503, "Verification message could not be sent")
+        return {"delivery": "sms", "retry_after_seconds": 30}
+    if settings.app_env != "development":
+        mobile_otp_challenges.pop(user.id, None)
+        raise HTTPException(503, "SMS provider is not configured")
+    return {"delivery": "development", "development_code": code, "retry_after_seconds": 30}
+
+
+@app.post("/api/auth/mobile-otp/verify")
+def verify_mobile_otp(data: MobileOtpIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    challenge = mobile_otp_challenges.get(user.id)
+    now = datetime.now(timezone.utc)
+    if not challenge or challenge["expires_at"] < now:
+        mobile_otp_challenges.pop(user.id, None)
+        raise HTTPException(422, "Verification code has expired. Request a new code")
+    challenge["attempts"] += 1
+    if challenge["attempts"] > 5:
+        mobile_otp_challenges.pop(user.id, None)
+        raise HTTPException(429, "Too many attempts. Request a new code")
+    if not secrets.compare_digest(challenge["digest"], hashlib.sha256(data.code.encode()).hexdigest()):
+        raise HTTPException(422, "Incorrect verification code")
+    user.phone_verified_at = now
+    mobile_otp_challenges.pop(user.id, None)
+    audit(db, user.id, "candidate.phone_verified", "user", user.id)
+    db.commit()
+    return {"verified": True}
+
+
+@app.put("/api/candidate/onboarding/employment")
+def save_candidate_employment(data: CandidateEmploymentIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    if user.phone_verified_at is None:
+        raise HTTPException(403, "Verify your mobile number before adding employment details")
+    candidate = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if not candidate:
+        raise HTTPException(404, "Candidate profile not found")
+    details = json.loads(candidate.country_specific_data or "{}")
+    details.update({
+        "career_stage": "experienced", "current_ctc": str(data.annual_salary),
+        "notice_period": data.notice_period,
+        "work_experiences": [{
+            "company_name": data.company_name.strip(), "job_title": data.job_title.strip(),
+            "employment_type": "Full time", "start_date": data.start_date,
+            "end_date": "" if data.currently_employed else data.end_date,
+            "is_current": data.currently_employed,
+        }],
+        "onboarding_step": "education",
+    })
+    candidate.current_title = data.job_title.strip()
+    candidate.current_employer = data.company_name.strip() if data.currently_employed else None
+    candidate.city = data.city.strip()
+    candidate.total_experience = data.experience_years + data.experience_months / 12
+    candidate.country_specific_data = json.dumps(details)
+    audit(db, user.id, "candidate.onboarding_employment_saved", "candidate", candidate.id)
+    db.commit()
+    return candidate_out(candidate)
+
+
+@app.put("/api/candidate/onboarding/education")
+def save_candidate_education(data: CandidateEducationIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    if user.phone_verified_at is None:
+        raise HTTPException(403, "Verify your mobile number before adding education details")
+    candidate = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if not candidate:
+        raise HTTPException(404, "Candidate profile not found")
+    details = json.loads(candidate.country_specific_data or "{}")
+    education = {key: str(value) if key in {"start_year", "end_year"} else value for key, value in data.model_dump().items()}
+    details.update({"highest_qualification": data.qualification, "education_specialization": data.specialization,
+                    "graduation_year": str(data.end_year), "education_history": [education], "onboarding_step": "last"})
+    candidate.country_specific_data = json.dumps(details)
+    audit(db, user.id, "candidate.onboarding_education_saved", "candidate", candidate.id)
+    db.commit()
+    return candidate_out(candidate)
+
+
+@app.put("/api/candidate/onboarding/preferences")
+def save_candidate_preferences(data: CandidatePreferencesIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    if user.phone_verified_at is None:
+        raise HTTPException(403, "Verify your mobile number before completing onboarding")
+    candidate = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if not candidate:
+        raise HTTPException(404, "Candidate profile not found")
+    locations = list(dict.fromkeys(location.strip() for location in data.preferred_locations if location.strip()))
+    details = json.loads(candidate.country_specific_data or "{}")
+    details.update({"resume_headline": data.resume_headline.strip(), "preferred_locations": locations,
+                    "preferred_location": locations[0], "expected_ctc": str(data.preferred_salary),
+                    "gender": data.gender, "onboarding_step": "complete"})
+    candidate.country_specific_data = json.dumps(details)
+    audit(db, user.id, "candidate.onboarding_completed", "candidate", candidate.id)
+    db.commit()
+    return candidate_out(candidate)
 
 
 @app.get("/api/auth/me")
@@ -1058,15 +1186,41 @@ async def upload_resume(candidate_id: int, file: UploadFile = File(...), user: U
     if len(content) > settings.max_resume_bytes: raise HTTPException(413, "Resume exceeds the development size limit")
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     storage_name = f"{uuid.uuid4().hex}{ext}"
-    (settings.upload_dir / storage_name).write_bytes(content)
+    stored_path = settings.upload_dir / storage_name
+    stored_path.write_bytes(content)
     old = db.get(ResumeFile, c.resume_file_id) if c.resume_file_id else None
     record = ResumeFile(storage_name=storage_name, original_name=Path(file.filename).name, content_type=types[ext], size_bytes=len(content), sha256=hashlib.sha256(content).hexdigest(), uploaded_by_user_id=user.id)
-    db.add(record); db.flush(); c.resume_file_id = record.id; audit(db, user.id, "candidate.resume_updated", "candidate", c.id, {"resume_file_id": record.id}); db.commit()
+    db.add(record); db.flush(); c.resume_file_id = record.id
+    extracted_fields = []
+    if c.user_id == user.id:
+        try:
+            extracted = extract_resume_profile(stored_path, ext)
+            details = json.loads(c.country_specific_data or "{}")
+            if extracted.get("city") and not c.city:
+                c.city = extracted["city"]; extracted_fields.append("city")
+            if extracted.get("current_title") and not c.current_title:
+                c.current_title = extracted["current_title"]; extracted_fields.append("current_title")
+            if extracted.get("total_experience") and not c.total_experience:
+                c.total_experience = extracted["total_experience"]; extracted_fields.append("total_experience")
+            if extracted.get("skills") and not json.loads(c.skills or "[]"):
+                c.skills = json.dumps(extracted["skills"]); extracted_fields.append("skills")
+            work_history = extracted.get("work_experiences") or []
+            if work_history and not c.current_employer and work_history[0].get("is_current"):
+                c.current_employer = work_history[0].get("company_name") or None
+            for key in ("highest_qualification", "education_specialization", "graduation_year", "education_history", "work_experiences"):
+                if extracted.get(key) and not details.get(key):
+                    details[key] = extracted[key]; extracted_fields.append(key)
+            details["_resume_extracted_at"] = datetime.now(timezone.utc).isoformat()
+            c.country_specific_data = json.dumps(details)
+        except Exception:
+            log.exception("Resume prefill extraction failed for candidate %s", c.id)
+    audit(db, user.id, "candidate.resume_updated", "candidate", c.id, {"resume_file_id": record.id, "extracted_fields": extracted_fields}); db.commit()
     if old:
         old_path = settings.upload_dir / old.storage_name
         if old_path.exists(): old_path.unlink()
         db.delete(old); db.commit()
-    return {"id": record.id, "original_name": record.original_name, "size_bytes": record.size_bytes}
+    return {"id": record.id, "original_name": record.original_name, "size_bytes": record.size_bytes,
+            "extracted_fields": extracted_fields}
 
 
 @app.get("/api/resumes/{resume_id}")

@@ -9,6 +9,54 @@ class LoginIn(BaseModel):
     role: Literal["requirement_vendor", "sourcing_partner", "candidate"] | None = None
 
 
+class MobileOtpIn(BaseModel):
+    code: str = Field(pattern=r"^\d{4}$")
+
+
+class CandidateEmploymentIn(BaseModel):
+    currently_employed: bool
+    experience_years: int = Field(ge=0, le=60)
+    experience_months: int = Field(ge=0, le=11)
+    company_name: str = Field(min_length=2, max_length=200)
+    job_title: str = Field(min_length=2, max_length=200)
+    city: str = Field(min_length=2, max_length=160)
+    start_date: str = Field(pattern=r"^\d{4}-\d{2}$")
+    end_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    annual_salary: float = Field(ge=0)
+    notice_period: str = Field(min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def valid_employment_dates(self):
+        if not self.currently_employed and not self.end_date:
+            raise ValueError("End date is required when you are not currently employed")
+        if self.end_date and self.end_date < self.start_date:
+            raise ValueError("Employment end date must be after the start date")
+        return self
+
+
+class CandidateEducationIn(BaseModel):
+    qualification: str = Field(min_length=2, max_length=160)
+    course: str = Field(min_length=2, max_length=160)
+    course_type: str = Field(min_length=2, max_length=80)
+    specialization: str = Field(min_length=2, max_length=160)
+    institution_name: str = Field(min_length=2, max_length=240)
+    start_year: int = Field(ge=1950, le=2100)
+    end_year: int = Field(ge=1950, le=2100)
+
+    @model_validator(mode="after")
+    def valid_education_years(self):
+        if self.end_year < self.start_year:
+            raise ValueError("Passing year must be after the starting year")
+        return self
+
+
+class CandidatePreferencesIn(BaseModel):
+    resume_headline: str = Field(min_length=10, max_length=300)
+    preferred_locations: list[str] = Field(min_length=1, max_length=10)
+    preferred_salary: float = Field(ge=0)
+    gender: Literal["Male", "Female", "Transgender", "Non-binary", "Prefer not to say"]
+
+
 class RegisterIn(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     email: EmailStr

@@ -61,7 +61,7 @@ function setupCareerSkillChips(form) {
 }
 
 /* Only the current step is shown; all controls remain mounted to preserve edits. */
-function setupCareerWizard(form, host) {
+function setupCareerWizard(form, host, initialStep = 0) {
   form.noValidate = true;
   form.classList.add('career-wizard');
   const skillChips = setupCareerSkillChips(form);
@@ -119,13 +119,55 @@ function setupCareerWizard(form, host) {
   back.onclick = () => show(current - 1);
   next.onclick = advance;
   form.addEventListener('input', event => event.target.setCustomValidity?.(''));
-  show(0, false);
+  show(initialStep, false);
   return {next:advance, isLast:()=>current === steps.length - 1, validateAll:()=>steps.every((_,index)=>validate(index))};
 }
 
 /* Structured career evidence, saved with the existing candidate profile. */
 const careerBaseProfilePage = profilePage;
+function renderCandidateProfileOverview(profile) {
+  const saved = profile.country_specific_data || {}, esc = candidateEscape;
+  const work = Array.isArray(saved.work_experiences) ? saved.work_experiences : [];
+  const education = Array.isArray(saved.education_history) ? saved.education_history : [];
+  const itSkills = Array.isArray(saved.it_skills) ? saved.it_skills : [];
+  const projects = Array.isArray(saved.projects) ? saved.projects : [];
+  const accomplishments = Array.isArray(saved.accomplishments) ? saved.accomplishments : [];
+  const languages = Array.isArray(saved.languages) ? saved.languages : [];
+  const checks = [profile.full_name, profile.phone, profile.email, profile.city, profile.current_title, profile.resume_file_id,
+    saved.resume_headline, profile.skills.length >= 3, work.length || saved.career_stage === 'fresher', education.length,
+    saved.profile_summary, saved.preferred_locations?.length, saved.gender, saved.date_of_birth];
+  const completion = Math.round(checks.filter(Boolean).length / checks.length * 100);
+  const initials = profile.full_name.split(/\s+/).map(word=>word[0]).slice(0,2).join('').toUpperCase();
+  const updated = new Date(profile.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  const salary = value => value && Number.isFinite(Number(value)) ? Number(value).toLocaleString('en-IN') : value;
+  const add = label => `<button class="candidate-profile-add" data-profile-edit>＋ ${label}</button>`;
+  const edit = '<button class="candidate-profile-edit" data-profile-edit aria-label="Edit profile">✎</button>';
+  const listCards = (items, renderer, emptyLabel) => items.length ? items.map(renderer).join('') : add(emptyLabel);
+  const sections = [
+    ['resume','Resume',profile.resume_file?`<div class="candidate-resume-row"><span>▤</span><div><b>${esc(profile.resume_file.original_name)}</b><small>Uploaded on ${new Date(profile.resume_file.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</small></div><button data-resume="${profile.resume_file.id}">Download</button></div>`:add('Upload resume')],
+    ['headline','Resume headline',saved.resume_headline?`<p>${esc(saved.resume_headline)}</p>`:add('Add resume headline')],
+    ['skills','Key skills',profile.skills.length?`<div class="candidate-profile-chips">${profile.skills.map(skill=>`<span>${esc(skill)}</span>`).join('')}</div>`:add('Add key skills')],
+    ['employment','Employment',listCards(work,item=>`<article class="candidate-profile-record"><b>${esc(item.job_title||'Job title')}</b><strong>${esc(item.company_name||'Company')}</strong><small>${esc(item.employment_type||'')} · ${esc(item.start_date||'')} to ${item.is_current?'Present':esc(item.end_date||'')}</small></article>`,'Add employment')],
+    ['education','Education',listCards(education,item=>`<article class="candidate-profile-record"><b>${esc(item.course||item.qualification||'Qualification')} <span>${esc(item.specialization||'')}</span></b><strong>${esc(item.institution_name||'Institute')}</strong><small>${esc(item.start_year||'')} – ${esc(item.end_year||'')} · ${esc(item.course_type||'')}</small></article>`,'Add education')],
+    ['it-skills','IT skills',itSkills.length?`<div class="candidate-profile-chips">${itSkills.map(item=>`<span>${esc(item.name)}</span>`).join('')}</div>`:'<p class="candidate-profile-empty">Show your technical expertise by mentioning software and skills you know.</p>'+add('Add details')],
+    ['projects','Projects',projects.length?listCards(projects,item=>`<article class="candidate-profile-record"><b>${esc(item.title)}</b><small>${esc(item.description||'')}</small></article>`,'Add project'):'<p class="candidate-profile-empty">Stand out by adding projects you have completed.</p>'+add('Add project')],
+    ['summary','Profile summary',saved.profile_summary?`<p>${esc(saved.profile_summary)}</p>`:'<p class="candidate-profile-empty">Highlight your key career achievements and potential.</p>'+add('Add profile summary')],
+    ['accomplishments','Accomplishments',accomplishments.length?listCards(accomplishments,item=>`<article class="candidate-profile-record"><b>${esc(item.title)}</b><small>${esc(item.type||'')}</small></article>`,'Add accomplishment'):`<div class="candidate-accomplishment-grid">${['Online profile','Work sample','Research publication','Presentation','Patent','Certification'].map(label=>`<button data-profile-edit><span>＋</span><b>${label}</b><small>Add relevant details</small></button>`).join('')}</div>`],
+    ['career','Career profile',`<div class="candidate-profile-details">${[['Current industry',saved.industry],['Department',saved.department],['Role category',saved.role_category],['Job role',saved.desired_role],['Desired job type',saved.job_type],['Desired employment type',saved.employment_type],['Preferred work location',(saved.preferred_locations||[]).join(', ')],['Preferred annual salary',saved.expected_ctc?`₹${salary(saved.expected_ctc)}`:'']].map(([label,value])=>`<div><small>${label}</small><b>${esc(value||'Add '+label.toLowerCase())}</b></div>`).join('')}</div>`],
+    ['personal','Personal details',`<div class="candidate-profile-details">${[['Gender',saved.gender],['Date of birth',saved.date_of_birth],['Marital status',saved.marital_status],['Work permit',saved.work_permit],['Address',saved.address],['Languages',languages.map(item=>item.language).join(', ')]].map(([label,value])=>`<div><small>${label}</small><b>${esc(value||'Add '+label.toLowerCase())}</b></div>`).join('')}</div>`],
+    ['diversity','Diversity & inclusion','<p class="candidate-profile-empty">Share details to attract recruiters who value people from different backgrounds.</p>'+add('Add disability status')]
+  ];
+  layout(`<div class="candidate-profile-overview"><section class="candidate-profile-hero"><div class="candidate-profile-avatar">${initials}</div><div><span class="candidate-profile-completion">${completion}%</span><h1>${esc(profile.full_name)} ${edit}</h1><small>Profile last updated · ${updated}</small><div class="candidate-profile-meta"><span>⌖ ${esc(profile.city||'Add location')}, India</span><span>◷ ${profile.total_experience?`${Math.floor(profile.total_experience)} Years ${Math.round(profile.total_experience%1*12)} Months`:'Add experience'}</span><span>₹ ${saved.current_ctc?salary(saved.current_ctc):'Add salary'}</span><span>☎ ${esc(profile.phone)}</span><span>✉ ${esc(profile.email)}</span></div></div><button class="btn btn-primary" data-profile-edit>Edit profile</button></section><div class="candidate-profile-columns"><aside><section class="candidate-quick-links"><h2>Quick links</h2>${sections.map(([id,title])=>`<a href="#profile-${id}">${title}</a>`).join('')}</section><section class="candidate-profile-promo"><span>PRO</span><h3>Power up your profile</h3><p>Complete every section to improve recruiter visibility.</p></section></aside><main>${sections.map(([id,title,body])=>`<section id="profile-${id}" class="candidate-profile-section"><header><h2>${title}</h2>${edit}</header>${body}</section>`).join('')}</main></div></div>`,'My Profile');
+  document.querySelectorAll('[data-profile-edit]').forEach(button=>button.onclick=()=>route('/candidate/profile/edit'));
+  wireDownloads();
+}
 profilePage = async function() {
+  if (session?.user.role === 'candidate' && location.pathname !== '/candidate/profile/edit') {
+    try {
+      const overviewProfile = await api('/candidate/profile');
+      if (overviewProfile.country_specific_data?.onboarding_step === 'complete') return renderCandidateProfileOverview(overviewProfile);
+    } catch (error) { toast(error.message,true); return; }
+  }
   await careerBaseProfilePage();
   if (session?.user.role !== 'candidate') return;
   const form = document.querySelector('#candidate-profile-form');
@@ -178,7 +220,7 @@ profilePage = async function() {
     if (!stage.value) stage.value = profile.total_experience > 0 ? 'experienced' : 'fresher';
     const updateStage = () => { const input = form.elements.total_experience; input.readOnly = stage.value === 'fresher'; if (input.readOnly) input.value = '0'; };
     stage.onchange = updateStage; updateStage();
-    const wizard = setupCareerWizard(form, host);
+    const wizard = setupCareerWizard(form, host, saved.onboarding_step === 'education' ? 2 : 0);
     form.onsubmit = async event => {
       event.preventDefault();
       if (!wizard.isLast()) { wizard.next(); return; }
@@ -201,6 +243,7 @@ profilePage = async function() {
       if (!data.education_history.length) { toast('Add at least one education record.',true); return; }
       data.education_specialization = data.education_history[0].specialization;
       data.graduation_year = data.education_history[0].end_year;
+      delete data.onboarding_step;
       const body = {country_specific_data:data};
       ['full_name','email','phone','country','city','current_title','linkedin_url','current_employer'].forEach(key=>body[key]=String(f.get(key)||'').trim());
       body.total_experience = Number(f.get('total_experience'));
@@ -212,4 +255,10 @@ profilePage = async function() {
       finally {button.disabled=false;button.textContent=original;}
     };
   } catch(error) { toast(error.message,true); }
+};
+
+const careerProfileRender = render;
+render = function() {
+  if (session?.user?.role === 'candidate' && location.pathname === '/candidate/profile/edit') return profilePage();
+  return careerProfileRender();
 };

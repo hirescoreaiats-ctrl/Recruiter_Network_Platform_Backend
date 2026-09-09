@@ -1,3 +1,6 @@
+import io
+import zipfile
+
 import pytest
 from sqlalchemy import select
 
@@ -64,6 +67,71 @@ def test_product_choice_cannot_change_candidate_or_partner_role(client):
         assert "product_mode" not in account["user"]
         assert client.get("/api/vendor/profile", headers=auth(account["access_token"])).status_code == 403
         assert client.post("/api/vendor/ai/candidate_summary", headers=auth(account["access_token"])).status_code == 403
+
+
+def test_candidate_account_otp_and_employment_onboarding(client):
+    response = client.post("/api/auth/register", json={
+        "name": "New Candidate", "email": "new-candidate@example.com", "password": "Password123!",
+        "phone": "+919876543210", "role": "candidate",
+        "profile": {"onboarding_stage": "account", "career_stage": "experienced", "city": ""},
+    })
+    assert response.status_code == 201, response.text
+    headers = auth(response.json()["access_token"])
+    profile = client.get("/api/candidate/profile", headers=headers).json()
+    assert profile["skills"] == []
+    assert profile["country_specific_data"]["career_stage"] == "experienced"
+    resume = io.BytesIO()
+    with zipfile.ZipFile(resume, "w") as archive:
+        archive.writestr("word/document.xml", """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+            <w:p><w:r><w:t>Software Engineer</w:t></w:r></w:p><w:p><w:r><w:t>Example Technologies Pvt Ltd</w:t></w:r></w:p>
+            <w:p><w:r><w:t>January 2022 - Present</w:t></w:r></w:p><w:p><w:r><w:t>3 years experience in Python, FastAPI and SQL</w:t></w:r></w:p>
+            <w:p><w:r><w:t>Meerut</w:t></w:r></w:p><w:p><w:r><w:t>B.Tech</w:t></w:r></w:p>
+            <w:p><w:r><w:t>Information Technology</w:t></w:r></w:p><w:p><w:r><w:t>ABES Engineering College</w:t></w:r></w:p>
+            <w:p><w:r><w:t>2017 - 2021</w:t></w:r></w:p></w:body></w:document>""")
+    uploaded = client.post(f"/api/candidates/{profile['id']}/resume", headers=headers,
+                           files={"file": ("candidate.docx", resume.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    assert uploaded.status_code == 200, uploaded.text
+    assert "education_history" in uploaded.json()["extracted_fields"]
+    profile = client.get("/api/candidate/profile", headers=headers).json()
+    assert profile["current_title"] == "Software Engineer"
+    assert profile["skills"] == ["Python", "SQL", "FastAPI"]
+    assert profile["country_specific_data"]["education_history"][0]["course"] == "B.Tech"
+    assert client.put("/api/candidate/onboarding/employment", headers=headers, json={
+        "currently_employed": True, "experience_years": 3, "experience_months": 6,
+        "company_name": "Example Tech", "job_title": "Software Developer", "city": "Meerut",
+        "start_date": "2023-01", "end_date": None, "annual_salary": 564000,
+        "notice_period": "1 Month",
+    }).status_code == 403
+    sent = client.post("/api/auth/mobile-otp/send", headers=headers)
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["delivery"] == "development"
+    verified = client.post("/api/auth/mobile-otp/verify", headers=headers, json={"code": sent.json()["development_code"]})
+    assert verified.status_code == 200
+    saved = client.put("/api/candidate/onboarding/employment", headers=headers, json={
+        "currently_employed": True, "experience_years": 3, "experience_months": 6,
+        "company_name": "Example Tech", "job_title": "Software Developer", "city": "Meerut",
+        "start_date": "2023-01", "end_date": None, "annual_salary": 564000,
+        "notice_period": "1 Month",
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["city"] == "Meerut"
+    assert saved.json()["total_experience"] == 3.5
+    assert saved.json()["country_specific_data"]["onboarding_step"] == "education"
+    education = client.put("/api/candidate/onboarding/education", headers=headers, json={
+        "qualification": "Graduation", "course": "B.Tech", "course_type": "Full time",
+        "specialization": "Information Technology", "institution_name": "ABES Engineering College",
+        "start_year": 2017, "end_year": 2021,
+    })
+    assert education.status_code == 200, education.text
+    assert education.json()["country_specific_data"]["onboarding_step"] == "last"
+    preferences = client.put("/api/candidate/onboarding/preferences", headers=headers, json={
+        "resume_headline": "Software Developer with B.Tech in Information Technology currently living in Meerut",
+        "preferred_locations": ["Noida", "Remote"], "preferred_salary": 800000, "gender": "Male",
+    })
+    assert preferences.status_code == 200, preferences.text
+    details = preferences.json()["country_specific_data"]
+    assert details["preferred_locations"] == ["Noida", "Remote"]
+    assert details["onboarding_step"] == "complete"
 
 
 def test_role_choice_at_login_is_checked_against_saved_account(client):

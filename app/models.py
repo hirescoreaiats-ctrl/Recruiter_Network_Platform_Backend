@@ -16,6 +16,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(40), index=True)
     phone: Mapped[str | None] = mapped_column(String(40))
+    phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)

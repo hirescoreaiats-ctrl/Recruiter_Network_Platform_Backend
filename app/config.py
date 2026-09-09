@@ -11,6 +11,9 @@ class Settings:
     max_resume_bytes = int(os.getenv("MAX_RESUME_MB", "5")) * 1024 * 1024
     profile_picture_dir = Path(os.getenv("PROFILE_PICTURE_DIR", "./uploads/profile-pictures")).resolve()
     max_profile_picture_bytes = int(os.getenv("MAX_PROFILE_PICTURE_MB", "2")) * 1024 * 1024
+    twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+    twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
+    twilio_from_number = os.getenv("TWILIO_FROM_NUMBER", "")
 
 
 settings = Settings()

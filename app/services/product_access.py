@@ -22,7 +22,8 @@ def company_access(company):
 
 
 def user_payload(db, user):
-    payload = {"id": user.id, "name": user.name, "email": user.email, "phone": user.phone, "role": user.role}
+    payload = {"id": user.id, "name": user.name, "email": user.email, "phone": user.phone, "role": user.role,
+               "phone_verified": user.phone_verified_at is not None}
     if user.role == "requirement_vendor":
         company = db.scalar(select(Company).join(CompanyMember).where(CompanyMember.user_id == user.id))
         payload.update(company_access(company))
