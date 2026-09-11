@@ -2,6 +2,12 @@ from .conftest import auth, register
 from .test_marketplace_mvp import CANDIDATE_ACCOUNT
 
 
+def test_health_checks_database_schema(client):
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json()["version"] == "0.2.1"
+
+
 def test_candidate_onboarding_draft_survives_login(client):
     account = register(client, "candidate", "onboarding-draft@example.com", CANDIDATE_ACCOUNT)
     headers = auth(account["access_token"])

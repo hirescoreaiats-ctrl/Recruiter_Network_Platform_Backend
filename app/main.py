@@ -4,8 +4,11 @@ import uuid
 import hashlib
 import re
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import httpx
+from alembic import command
+from alembic.config import Config
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -35,7 +38,24 @@ from .services.resume_parser import extract_resume_profile
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("recruitment-network")
-app = FastAPI(title="HireScoreAI Recruitment Network MVP", version="0.2.0")
+
+
+def upgrade_database():
+    root = Path(__file__).resolve().parent.parent
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "migrations"))
+    command.upgrade(config, "head")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if settings.auto_migrate:
+        log.info("Applying database migrations before accepting requests")
+        upgrade_database()
+    yield
+
+
+app = FastAPI(title="HireScoreAI Recruitment Network MVP", version="0.2.1", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "static"), name="assets")
 mobile_otp_challenges: dict[int, dict] = {}
 
@@ -138,8 +158,13 @@ def application_out(db: Session, a: Application):
 
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "environment": settings.app_env}
+def health(db: Session = Depends(get_db)):
+    try:
+        db.execute(select(User.id, User.phone_verified_at).limit(1)).first()
+    except Exception as error:
+        log.exception("Database health check failed")
+        raise HTTPException(503, "Database unavailable or schema is out of date") from error
+    return {"status": "ok", "environment": settings.app_env, "version": app.version}
 
 
 @app.post("/api/auth/register", status_code=201)

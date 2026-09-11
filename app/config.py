@@ -4,6 +4,7 @@ from pathlib import Path
 
 class Settings:
     app_env = os.getenv("APP_ENV", "development")
+    auto_migrate = os.getenv("AUTO_MIGRATE", "true" if app_env == "production" else "false").lower() in {"1", "true", "yes"}
     database_url = os.getenv("DATABASE_URL", "sqlite:///./recruitment_network.db")
     jwt_secret = os.getenv("JWT_SECRET", "local-only-change-me")
     access_token_minutes = int(os.getenv("ACCESS_TOKEN_MINUTES", "480"))
