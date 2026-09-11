@@ -23,7 +23,8 @@ from .models import (
     RequirementCommercialTerms, RequirementPartner, RequirementSubmissionSchema, ResumeFile, User,
 )
 from .schemas import (
-    AvailabilityIn, CandidateEducationIn, CandidateEmploymentIn, CandidateIn, CandidatePreferencesIn, CandidateProfileIn,
+    AvailabilityIn, CandidateEducationIn, CandidateEmploymentIn, CandidateIn, CandidateOnboardingDraftIn,
+    CandidatePreferencesIn, CandidateProfileIn,
     ConversationIn, InterestIn, LoginIn, MessageIn, MobileOtpIn,
     PayoutStatusIn, PlacementStatusIn, RegisterIn, RequirementIn, StatusIn, SubmissionIn,
 )
@@ -308,6 +309,27 @@ def save_candidate_preferences(data: CandidatePreferencesIn, user: User = Depend
     audit(db, user.id, "candidate.onboarding_completed", "candidate", candidate.id)
     db.commit()
     return candidate_out(candidate)
+
+
+@app.put("/api/candidate/onboarding/draft")
+def save_candidate_onboarding_draft(data: CandidateOnboardingDraftIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    if user.phone_verified_at is None:
+        raise HTTPException(403, "Verify your mobile number before saving profile setup")
+    candidate = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if not candidate:
+        raise HTTPException(404, "Candidate profile not found")
+    draft = {"profile": data.profile, "country_specific_data": data.country_specific_data}
+    if len(json.dumps(draft)) > 100_000:
+        raise HTTPException(413, "Onboarding draft is too large")
+    details = json.loads(candidate.country_specific_data or "{}")
+    if details.get("onboarding_step") == "complete" or details.get("_profile_completed") is True:
+        raise HTTPException(409, "Candidate onboarding is already complete")
+    details["_onboarding_draft"] = draft
+    details["onboarding_step"] = data.step
+    candidate.country_specific_data = json.dumps(details)
+    audit(db, user.id, "candidate.onboarding_draft_saved", "candidate", candidate.id, {"step": data.step})
+    db.commit()
+    return {"saved": True, "step": data.step}
 
 
 @app.get("/api/auth/me")
@@ -643,6 +665,10 @@ def partner_submission(application_id: int, user: User = Depends(require_role("s
 def candidate_profile(user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
     c = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
     result = candidate_out(c)
+    private_details = json.loads(c.country_specific_data or "{}")
+    for key in ("_onboarding_draft", "_profile_completed"):
+        if key in private_details:
+            result["country_specific_data"][key] = private_details[key]
     resume = db.get(ResumeFile, c.resume_file_id) if c.resume_file_id else None
     result["resume_file"] = {
         "id": resume.id, "original_name": resume.original_name,

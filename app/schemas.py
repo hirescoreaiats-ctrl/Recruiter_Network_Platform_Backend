@@ -57,6 +57,12 @@ class CandidatePreferencesIn(BaseModel):
     gender: Literal["Male", "Female", "Transgender", "Non-binary", "Prefer not to say"]
 
 
+class CandidateOnboardingDraftIn(BaseModel):
+    step: int = Field(ge=1, le=5)
+    profile: dict[str, Any] = Field(default_factory=dict)
+    country_specific_data: dict[str, Any] = Field(default_factory=dict)
+
+
 class RegisterIn(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     email: EmailStr
