@@ -27,7 +27,7 @@ function showAccountError(message) {
 function candidateRegistrationPage() {
   app.innerHTML = '<div class="candidate-register-page"><header class="candidate-register-header"><a href="/auth/register" data-link class="candidate-register-brand"><span>H</span>HireScoreAI</a><p>Already registered? <a href="/auth/login" data-link>Login</a> here</p></header>' +
     '<main class="candidate-register-main"><aside class="candidate-register-benefits" aria-label="Registration benefits"><div class="candidate-register-illustration" aria-hidden="true"><span>✓</span><i>♙</i></div><h2>On registering, you can</h2><ul><li>Build your profile and let recruiters find you</li><li>Get relevant opportunities delivered to you</li><li>Find the right role and grow your career</li></ul></aside>' +
-    '<section class="candidate-register-card"><button type="button" id="account-back" class="candidate-register-back">← Account type</button><h1>Create your account</h1><p>First, create your account. Then complete your profile in six guided steps.</p><p id="account-error" role="alert" class="account-error" hidden></p>' +
+    '<section class="candidate-register-card"><button type="button" id="account-back" class="candidate-register-back">← Account type</button><h1>Create your candidate profile</h1><p>Join the HireScoreAI recruitment network and discover relevant opportunities.</p><p id="account-error" role="alert" class="account-error" hidden></p>' +
     '<form id="register" class="candidate-register-form"><div class="field"><label for="candidate-name">Full name <b>*</b></label><input id="candidate-name" name="name" autocomplete="name" placeholder="What is your name?" required maxlength="160"></div>' +
     '<div class="field"><label for="candidate-email">Email ID <b>*</b></label><input id="candidate-email" name="email" type="email" autocomplete="email" placeholder="Tell us your email ID" required><small>We’ll send relevant opportunities and updates to this email.</small></div>' +
     '<div class="field"><label for="candidate-password">Password <b>*</b></label><input id="candidate-password" name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Minimum 8 characters" required><small>This helps your account stay protected.</small></div>' +
@@ -116,7 +116,7 @@ function candidateVerificationPage(name, phone, careerStage, delivery = null, se
   document.getElementById('candidate-otp-form').onsubmit = async event => {
     event.preventDefault(); if (verify.disabled) return;
     verify.disabled = true; verify.textContent = 'Verifying…'; error.hidden = true;
-    try { await api('/auth/mobile-otp/verify', {method: 'POST', body: JSON.stringify({code: inputs.map(input => input.value).join('')})}); session.user.phone_verified = true; localStorage.setItem('tb_session', JSON.stringify(session)); route('/candidate/onboarding'); }
+    try { await api('/auth/mobile-otp/verify', {method: 'POST', body: JSON.stringify({code: inputs.map(input => input.value).join('')})}); session.user.phone_verified = true; localStorage.setItem('tb_session', JSON.stringify(session)); route(careerStage === 'experienced' ? '/candidate/onboarding/employment' : '/candidate/onboarding/education'); }
     catch (verifyError) { error.textContent = verifyError.message; error.hidden = false; verify.disabled = false; verify.textContent = 'Verify'; }
   };
   resend.onclick = async () => {
