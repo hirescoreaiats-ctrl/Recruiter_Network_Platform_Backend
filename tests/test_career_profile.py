@@ -29,3 +29,31 @@ def test_career_sections_round_trip_and_remove(client):
     reloaded = client.get('/api/candidate/profile', headers=headers).json()['country_specific_data']
     assert reloaded['projects'] == []
     assert reloaded['it_skills'] == data['it_skills']
+
+
+def test_section_patch_preserves_unrelated_fields_and_setup_state(client):
+    account = register(client, "candidate", "partial@example.com", CANDIDATE_ACCOUNT)
+    headers = auth(account["access_token"])
+    before = client.get('/api/candidate/profile', headers=headers).json()
+    patch = {'country_specific_data': {'profile_summary': 'Updated summary'}}
+    response = client.patch('/api/candidate/profile', headers=headers, json=patch)
+    assert response.status_code == 200, response.text
+    after = response.json()
+    assert after['country_specific_data'] == {**before['country_specific_data'], 'profile_summary': 'Updated summary'}
+    for key in ('full_name', 'email', 'city', 'skills', 'current_employer', 'total_experience'):
+        assert after[key] == before[key]
+    invalid = client.patch('/api/candidate/profile', headers=headers, json={'skills': ['Python', 'python', 'Python']})
+    assert invalid.status_code == 422
+    assert client.patch('/api/candidate/profile', headers=headers, json={'country_specific_data': {'projects': [{'title': ''}]}}).status_code == 422
+    assert client.patch('/api/candidate/profile', headers=headers, json={'country_specific_data': {'_profile_completed': True}}).status_code == 422
+
+
+def test_section_patch_does_not_require_complete_onboarding(client):
+    account = register(client, "candidate", "section-only@example.com", {"full_name": "Section Candidate", "phone": "9999999999", "country": "IN", "onboarding_stage": "account", "career_stage": "fresher", "city": "Delhi"})
+    headers = auth(account["access_token"])
+    before = client.get('/api/candidate/profile', headers=headers).json()
+    response = client.patch('/api/candidate/profile', headers=headers, json={'country_specific_data': {'projects': [{'title': 'Portfolio'}]}})
+    assert response.status_code == 200, response.text
+    after = response.json()
+    assert after['country_specific_data'] == {**before['country_specific_data'], 'projects': [{'title': 'Portfolio'}]}
+    assert after['skills'] == before['skills']

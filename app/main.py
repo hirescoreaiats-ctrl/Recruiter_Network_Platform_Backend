@@ -27,7 +27,7 @@ from .models import (
 )
 from .schemas import (
     AvailabilityIn, CandidateEducationIn, CandidateEmploymentIn, CandidateIn, CandidateOnboardingDraftIn,
-    CandidatePreferencesIn, CandidateProfileIn,
+    CandidatePreferencesIn, CandidateProfileIn, CandidateProfilePatchIn,
     ConversationIn, InterestIn, LoginIn, MessageIn, MobileOtpIn,
     PayoutStatusIn, PlacementStatusIn, RegisterIn, RequirementIn, StatusIn, SubmissionIn,
 )
@@ -738,6 +738,23 @@ async def upload_candidate_profile_picture(file: UploadFile = File(...), user: U
     path = settings.profile_picture_dir / f"{user.id}{ext}"
     path.write_bytes(content)
     return {"content_type": media_type, "size_bytes": len(content)}
+
+
+@app.patch("/api/candidate/profile")
+def patch_candidate_profile(data: CandidateProfilePatchIn, user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    candidate = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if candidate is None:
+        raise HTTPException(404, "Candidate profile not found")
+    values = data.model_dump(exclude_unset=True)
+    details = values.pop("country_specific_data", None)
+    if details is not None:
+        existing = json.loads(candidate.country_specific_data or "{}")
+        candidate.country_specific_data = json.dumps({**existing, **details})
+    for key, value in values.items():
+        setattr(candidate, key, json.dumps(value) if key == "skills" else value)
+    audit(db, user.id, "candidate.profile_updated", "candidate", candidate.id, {"fields": list(values), "detail_fields": list(details or {})})
+    db.commit()
+    return candidate_out(candidate)
 
 
 @app.put("/api/candidate/profile")

@@ -181,6 +181,52 @@ class CandidateProfileIn(CandidateIn):
         return self
 
 
+class CandidateProfilePatchIn(BaseModel):
+    """Validate supplied profile fields without requiring unrelated setup fields."""
+    full_name: str = Field(default=None, min_length=2)
+    email: EmailStr = None
+    phone: str = Field(default=None, min_length=5)
+    country: str = Field(default=None, min_length=2, max_length=2)
+    city: str = Field(default=None, min_length=2)
+    current_title: str = Field(default=None, min_length=2)
+    total_experience: float = Field(default=None, ge=0, le=60)
+    skills: list[str] = Field(default=None, min_length=3)
+    linkedin_url: str | None = None
+    current_employer: str | None = None
+    country_specific_data: dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def validate_changed_fields(self):
+        if self.skills is not None and len({skill.strip().casefold() for skill in self.skills if skill.strip()}) < 3:
+            raise ValueError("Add at least 3 distinct skills")
+        details = self.country_specific_data
+        if any(key.startswith('_') or key.startswith('onboarding_') for key in details):
+            raise ValueError("Profile edits cannot change onboarding state")
+        required_records = {
+            "education_history": {"qualification", "institution_name", "course", "specialization", "end_year"},
+            "work_experiences": {"company_name", "job_title", "start_date"},
+            "projects": {"title"}, "it_skills": {"name"},
+            "accomplishments": {"type", "title"}, "languages": {"language"},
+        }
+        for key, required in required_records.items():
+            if key not in details:
+                continue
+            records = details[key]
+            if not isinstance(records, list):
+                raise ValueError(f"{key} must be a list")
+            if key == "education_history" and not records:
+                raise ValueError("Add at least one education record")
+            for record in records:
+                if not isinstance(record, dict) or any(not str(record.get(field) or "").strip() for field in required):
+                    raise ValueError(f"Complete the required fields in {key}")
+                for start, end in [("start_date", "end_date"), ("start_year", "end_year")]:
+                    if record.get(start) and record.get(end):
+                        before, after = str(record[start]), str(record[end])
+                        if (int(after) < int(before)) if start == "start_year" else (after < before):
+                            raise ValueError("End date must be after the start date")
+        return self
+
+
 class StatusIn(BaseModel):
     status: Literal["received", "submitted", "under_evaluation", "under_review", "qualified", "ready_for_submission", "shortlisted", "interview", "offer", "selected", "joined", "hold", "rejected"]
 
