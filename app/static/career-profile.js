@@ -61,7 +61,7 @@ function setupCareerSkillChips(form) {
 }
 
 /* Only the current step is shown; all controls remain mounted to preserve edits. */
-function setupCareerWizard(form, host, initialStep = 0) {
+function setupCareerWizard(form, host, initialStep = 0, editSection = null) {
   form.noValidate = true;
   form.classList.add('career-wizard');
   const skillChips = setupCareerSkillChips(form);
@@ -70,16 +70,50 @@ function setupCareerWizard(form, host, initialStep = 0) {
   const overview = section('career');
   base[1].append(...overview.querySelectorAll('.profile-form-grid'));
   overview.remove();
-  const steps = [base[0], base[1], section('education_history'), section('work_experiences'), base[2],
+  let steps = [base[0], base[1], section('education_history'), section('work_experiences'), base[2],
     section('preferences'), section('it_skills'), section('projects'), section('accomplishments'), section('languages'), section('personal')];
   steps.forEach(step => host.append(step));
+  if (editSection) {
+    const selected = document.createElement('section');
+    selected.className = 'profile-form-card';
+    const labels = {identity:'Basic details', headline:'Resume headline', skills:'Key skills', summary:'Profile summary', career:'Career profile', personal:'Personal details', diversity:'Diversity & inclusion'};
+    selected.innerHTML = `<header><h2>${labels[editSection] || 'Edit profile'}</h2></header><div class="profile-form-grid"></div>`;
+    const grid = selected.querySelector('.profile-form-grid');
+    const moveFields = names => names.forEach(name => {
+      const control = form.elements[name];
+      if (control) grid.append(control.closest('.field'));
+    });
+    const groups = {employment:'work_experiences', education:'education_history', 'it-skills':'it_skills', projects:'projects', accomplishments:'accomplishments'};
+    if (groups[editSection]) selected.append(section(groups[editSection]));
+    else if (editSection === 'career') {
+      selected.append(section('preferences'));
+      moveFields(['extra_expected_ctc', 'extra_expected_rate', 'extra_work_mode_preference']);
+    } else if (editSection === 'personal') {
+      selected.append(section('personal'), section('languages'));
+    } else {
+      const fields = {identity:['full_name','email','phone','linkedin_url','city','current_title','total_experience','current_employer','extra_current_ctc'], headline:['extra_resume_headline'], skills:['skills'], summary:['extra_profile_summary'], diversity:['extra_disability']};
+      moveFields(fields[editSection] || fields.identity);
+    }
+    // Keep other controls mounted for existing handlers, but exclude them from validation and saving.
+    steps.forEach(step => { if (!selected.contains(step)) step.hidden = true; });
+    host.append(selected);
+    for (const control of form.querySelectorAll('input,select,textarea')) control.disabled = !selected.contains(control);
+    steps = [selected];
+    initialStep = 0;
+    const hero = document.querySelector('.profile-hero');
+    hero.querySelector('h1').textContent = 'Edit ' + (labels[editSection] || groups[editSection]?.replaceAll('_', ' ') || 'profile').toLowerCase();
+    hero.querySelector('p').textContent = 'Save your changes to return to your profile.';
+    document.querySelector('[data-profile-dashboard]').onclick = () => route('/candidate/profile');
+  }
   const titles = steps.map(step => step.querySelector('h2').textContent);
   const progress = document.createElement('div');
   progress.className = 'career-progress';
   progress.innerHTML = '<p data-step-status role="status" aria-live="polite"></p><progress aria-label="Profile setup progress"></progress><p data-step-help></p>';
   form.prepend(progress);
+  progress.hidden = Boolean(editSection);
   const bar = form.querySelector('.profile-save-bar');
   bar.innerHTML = '<button type="button" class="btn btn-secondary" data-career-back>← Back</button><span class="career-save-note">Details are saved when you finish.</span><button type="button" class="btn btn-primary" data-career-next>Next →</button><button type="submit" class="btn btn-primary" data-career-save>Save profile</button>';
+  if (editSection) bar.querySelector('.career-save-note').textContent = 'Save changes to return to your profile.';
   const back = bar.querySelector('[data-career-back]'), next = bar.querySelector('[data-career-next]'), save = bar.querySelector('[data-career-save]');
   let current = 0;
   function show(index, focus = true) {
@@ -88,7 +122,8 @@ function setupCareerWizard(form, host, initialStep = 0) {
     progress.querySelector('[data-step-status]').textContent = `Step ${index + 1} of ${steps.length} · ${titles[index]}`;
     const meter = progress.querySelector('progress'); meter.max = steps.length; meter.value = index + 1;
     progress.querySelector('[data-step-help]').textContent = index === steps.length - 1 ? 'Last step. Add any optional details, then save your profile.' : 'Complete this section, then continue. You can go back to edit your answers.';
-    back.disabled = index === 0;
+    back.disabled = !editSection && index === 0;
+    if (editSection) back.textContent = 'Cancel';
     next.hidden = index === steps.length - 1;
     save.hidden = index !== steps.length - 1;
     if (focus) { const heading = steps[index].querySelector('h2'); heading.tabIndex = -1; heading.focus({preventScroll:true}); progress.scrollIntoView({block:'start',behavior:'smooth'}); }
@@ -116,7 +151,7 @@ function setupCareerWizard(form, host, initialStep = 0) {
     return true;
   }
   const advance = () => { if (validate(current) && current < steps.length - 1) show(current + 1); };
-  back.onclick = () => show(current - 1);
+  back.onclick = () => editSection ? route('/candidate/profile') : show(current - 1);
   next.onclick = advance;
   form.addEventListener('input', event => event.target.setCustomValidity?.(''));
   show(initialStep, false);
@@ -157,17 +192,42 @@ function renderCandidateProfileOverview(profile) {
     ['personal','Personal details',`<div class="candidate-profile-details">${[['Gender',saved.gender],['Date of birth',saved.date_of_birth],['Marital status',saved.marital_status],['Work permit',saved.work_permit],['Address',saved.address],['Languages',languages.map(item=>item.language).join(', ')]].map(([label,value])=>`<div><small>${label}</small><b>${esc(value||'Add '+label.toLowerCase())}</b></div>`).join('')}</div>`],
     ['diversity','Diversity & inclusion','<p class="candidate-profile-empty">Share details to attract recruiters who value people from different backgrounds.</p>'+add('Add disability status')]
   ];
-  layout(`<div class="candidate-profile-overview"><section class="candidate-profile-hero"><div class="candidate-profile-avatar">${initials}</div><div><span class="candidate-profile-completion">${completion}%</span><h1>${esc(profile.full_name)} ${edit}</h1><small>Profile last updated · ${updated}</small><div class="candidate-profile-meta"><span>⌖ ${esc(profile.city||'Add location')}, India</span><span>◷ ${profile.total_experience?`${Math.floor(profile.total_experience)} Years ${Math.round(profile.total_experience%1*12)} Months`:'Add experience'}</span><span>₹ ${saved.current_ctc?salary(saved.current_ctc):'Add salary'}</span><span>☎ ${esc(profile.phone)}</span><span>✉ ${esc(profile.email)}</span></div></div><button class="btn btn-primary" data-profile-edit>Edit profile</button></section><div class="candidate-profile-columns"><aside><section class="candidate-quick-links"><h2>Quick links</h2>${sections.map(([id,title])=>`<a href="#profile-${id}">${title}</a>`).join('')}</section><section class="candidate-profile-promo"><span>PRO</span><h3>Power up your profile</h3><p>Complete every section to improve recruiter visibility.</p></section></aside><main>${sections.map(([id,title,body])=>`<section id="profile-${id}" class="candidate-profile-section"><header><h2>${title}</h2>${edit}</header>${body}</section>`).join('')}</main></div></div>`,'My Profile');
-  document.querySelectorAll('[data-profile-edit]').forEach(button=>button.onclick=()=>route('/candidate/profile/edit'));
+  layout(`<div class="candidate-profile-overview"><section class="candidate-profile-hero"><div class="candidate-profile-avatar">${initials}</div><div><span class="candidate-profile-completion">${completion}%</span><h1>${esc(profile.full_name)} ${edit}</h1><small>Profile last updated · ${updated}</small><div class="candidate-profile-meta"><span>⌖ ${esc(profile.city||'Add location')}, India</span><span>◷ ${profile.total_experience?`${Math.floor(profile.total_experience)} Years ${Math.round(profile.total_experience%1*12)} Months`:'Add experience'}</span><span>₹ ${saved.current_ctc?salary(saved.current_ctc):'Add salary'}</span><span>☎ ${esc(profile.phone)}</span><span>✉ ${esc(profile.email)}</span></div></div><button class="btn btn-primary" data-profile-edit>Edit profile</button></section><div class="candidate-profile-columns"><aside><section class="candidate-quick-links"><h2>Quick links</h2>${sections.map(([id,title])=>`<a href="#profile-${id}">${title}</a>`).join('')}</section></aside><main>${sections.map(([id,title,body])=>`<section id="profile-${id}" class="candidate-profile-section"><header><h2>${title}</h2>${edit}</header>${body}</section>`).join('')}</main></div></div>`,'My Profile');
+  document.querySelectorAll('[data-profile-edit]').forEach(button=>button.onclick=()=>{
+    const section = button.closest('.candidate-profile-section')?.id.replace('profile-', '') || 'identity';
+    route('/candidate/profile/edit?section=' + encodeURIComponent(section));
+  });
   wireDownloads();
 }
+async function renderProfileResumeEditor() {
+  try {
+    const profile = await api('/candidate/profile');
+    layout(`<section class="profile-form-card"><h1>Resume</h1><p>Upload a PDF, DOC or DOCX resume (maximum 5 MB).</p><form id="profile-resume-edit"><div class="field"><label for="profile-resume-file">Resume</label><input id="profile-resume-file" name="resume" type="file" accept=".pdf,.doc,.docx" required></div><div class="actions"><button type="button" class="btn btn-secondary" data-resume-cancel>Cancel</button><button class="btn btn-primary" type="submit">Save resume</button></div></form></section>`, 'My Profile');
+    document.querySelector('[data-resume-cancel]').onclick = () => route('/candidate/profile');
+    document.querySelector('#profile-resume-edit').onsubmit = async event => {
+      event.preventDefault();
+      const form = event.currentTarget, button = form.querySelector('[type="submit"]');
+      const file = form.elements.resume.files[0];
+      if (!file || file.size > 5 * 1024 * 1024) { toast('Select a resume up to 5 MB.', true); return; }
+      const upload = new FormData(); upload.append('file', file);
+      button.disabled = true;
+      try {
+        await api(`/candidates/${profile.id}/resume`, {method:'POST', body:upload});
+        toast('Resume saved'); route('/candidate/profile');
+      } catch (error) { toast(error.message, true); button.disabled = false; }
+    };
+  } catch (error) { toast(error.message, true); }
+}
+
 profilePage = async function() {
   if (session?.user.role === 'candidate' && location.pathname !== '/candidate/profile/edit') {
     try {
       const overviewProfile = await api('/candidate/profile');
-      if (overviewProfile.country_specific_data?.onboarding_step === 'complete') return renderCandidateProfileOverview(overviewProfile);
+      if (overviewProfile.country_specific_data?.onboarding_step === 'complete' || overviewProfile.country_specific_data?._profile_completed) return renderCandidateProfileOverview(overviewProfile);
     } catch (error) { toast(error.message,true); return; }
   }
+  const editSection = location.pathname === '/candidate/profile/edit' ? new URLSearchParams(location.search).get('section') || 'identity' : null;
+  if (editSection === 'resume') return renderProfileResumeEditor();
   await careerBaseProfilePage();
   if (session?.user.role !== 'candidate') return;
   const form = document.querySelector('#candidate-profile-form');
@@ -220,7 +280,7 @@ profilePage = async function() {
     if (!stage.value) stage.value = profile.total_experience > 0 ? 'experienced' : 'fresher';
     const updateStage = () => { const input = form.elements.total_experience; input.readOnly = stage.value === 'fresher'; if (input.readOnly) input.value = '0'; };
     stage.onchange = updateStage; updateStage();
-    const wizard = setupCareerWizard(form, host, saved.onboarding_step === 'education' ? 2 : 0);
+    const wizard = setupCareerWizard(form, host, saved.onboarding_step === 'education' ? 2 : 0, editSection);
     form.onsubmit = async event => {
       event.preventDefault();
       if (!wizard.isLast()) { wizard.next(); return; }
@@ -230,6 +290,7 @@ profilePage = async function() {
       const f = new FormData(form), data = {...saved};
       for (const [key,value] of f) if (key.startsWith('extra_')) data[key.slice(6)] = value.trim();
       for (const [key,,fields] of collections) {
+        if (editSection && !host.lastElementChild.contains(host.querySelector(`[data-records="${key}"]`))) continue;
         data[key] = [...host.querySelector(`[data-records="${key}"]`).children].map(row => {
           const record = JSON.parse(row.dataset.original);
           fields.forEach(([name],index)=>{record[name]=row.querySelectorAll('input,select,textarea')[index].value.trim();});
@@ -240,17 +301,20 @@ profilePage = async function() {
           if (record.start_date && record.end_date && record.end_date < record.start_date || record.start_year && record.end_year && Number(record.end_year) < Number(record.start_year)) { toast('End date must be after the start date.',true); return; }
         }
       }
-      if (!data.education_history.length) { toast('Add at least one education record.',true); return; }
-      data.education_specialization = data.education_history[0].specialization;
-      data.graduation_year = data.education_history[0].end_year;
-      delete data.onboarding_step;
+      if (!editSection && !data.education_history.length) { toast('Add at least one education record.',true); return; }
+      if ((!editSection || editSection === 'education') && data.education_history?.length) {
+        data.education_specialization = data.education_history[0].specialization;
+        data.graduation_year = data.education_history[0].end_year;
+      }
+      data.onboarding_step = 'complete';
+      if (f.has('extra_preferred_locations')) data.preferred_locations = String(f.get('extra_preferred_locations')).split(',').map(x=>x.trim()).filter(Boolean);
       const body = {country_specific_data:data};
-      ['full_name','email','phone','country','city','current_title','linkedin_url','current_employer'].forEach(key=>body[key]=String(f.get(key)||'').trim());
-      body.total_experience = Number(f.get('total_experience'));
-      body.skills = [...new Set(String(f.get('skills')).split(',').map(x=>x.trim()).filter(Boolean))];
+      ['full_name','email','phone','country','city','current_title','linkedin_url','current_employer'].forEach(key=>body[key]=f.has(key) ? String(f.get(key)||'').trim() : profile[key]);
+      body.total_experience = f.has('total_experience') ? Number(f.get('total_experience')) : profile.total_experience;
+      body.skills = f.has('skills') ? [...new Set(String(f.get('skills')).split(',').map(x=>x.trim()).filter(Boolean))] : profile.skills;
       button.disabled = true;
       const original = button.textContent; button.textContent = 'Saving profile…';
-      try { await api('/candidate/profile',{method:'PUT',body:JSON.stringify(body)}); toast('Career profile saved'); await profilePage(); }
+      try { await api('/candidate/profile',{method:'PUT',body:JSON.stringify(body)}); toast('Career profile saved'); route('/candidate/profile'); }
       catch(error) { toast(error.message,true); }
       finally {button.disabled=false;button.textContent=original;}
     };
