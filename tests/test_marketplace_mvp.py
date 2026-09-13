@@ -14,7 +14,7 @@ REQ = {
     "country": "IN", "state_region": "Karnataka", "city": "Bengaluru", "work_mode": "Hybrid",
     "employment_type": "Full-Time", "min_experience": 7, "max_experience": 11,
     "required_skills": ["Java", "Spring Boot", "AWS"], "preferred_skills": ["Kafka"],
-    "openings": 2, "currency": "INR", "status": "active",
+    "openings": 2, "currency": "INR", "status": "active", "external_sourcing_approved": True,
     "submission_schema": [
         {"key": "resume", "label": "Resume", "required": True},
         {"key": "candidate_name", "label": "Candidate name", "required": True},

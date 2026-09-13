@@ -109,6 +109,7 @@ class RequirementIn(BaseModel):
     additional_notes: str | None = None
     submission_schema: list[dict[str, Any]] = []
     commercial_terms: dict[str, Any] | None = None
+    external_sourcing_approved: bool = False
 
     @model_validator(mode="after")
     def valid_ranges(self):
@@ -117,6 +118,10 @@ class RequirementIn(BaseModel):
         if self.compensation_min is not None and self.compensation_max is not None and self.compensation_min > self.compensation_max:
             raise ValueError("Minimum compensation cannot exceed maximum compensation")
         return self
+
+
+class ExternalSourcingDecisionIn(BaseModel):
+    approved: bool
 
 
 class CandidateIn(BaseModel):

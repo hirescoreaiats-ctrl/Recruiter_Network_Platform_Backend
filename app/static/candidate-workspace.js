@@ -40,7 +40,7 @@ layout = function(content, title) {
   const sections = [ ['Home', '/candidate/dashboard', 'home'], ['My Profile', '/candidate/profile', 'profile'], ['Availability', '/candidate/availability', 'clock'], ['My Resume', '/candidate/resume', 'file'] ];
   sidebar.id = 'candidate-navigation';
   sidebar.innerHTML = `
-    <a class="cw-brand" href="/candidate/dashboard" data-link aria-label="HireScore AI home"><span class="cw-logo"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M5 22V13h5v9zm8 0V8h5v14zm8 0V3h5v19z" fill="currentColor"/><path d="m5 26 21-8" stroke="#9c91ff" stroke-width="2"/></svg></span><span><strong>HireScore AI</strong><small>CANDIDATE WORKSPACE</small></span></a>
+    <a class="cw-brand" href="/candidate/dashboard" data-link aria-label="HireScore AI candidate career profile home"><img src="/assets/hirescore-candidate-career-profile.png" alt="HireScore AI — Candidate Career Profile"></a>
     <div class="cw-nav-body"><span class="cw-section-label">WORKSPACE</span><nav class="nav cw-nav" aria-label="Candidate workspace">${sections.map(([label,path,icon]) => `<a href="${path}" data-link class="${location.pathname===path?'active':''}" ${location.pathname===path?'aria-current="page"':''}><span class="cw-nav-icon">${candidateIcon(icon)}</span><span>${label}</span></a>`).join('')}</nav></div>
     <div class="cw-sidebar-bottom"><button type="button" id="logout" class="cw-logout">${candidateIcon('logout')}<span>Logout</span></button></div>`;
   sidebar.querySelector('#logout').onclick = logoutAction;
@@ -123,7 +123,7 @@ resumePage = async function() {
       feedback.textContent = 'Uploading your resume. Please keep this page open.';
       const data = new FormData(); data.append('file', selectedFile);
       try {
-        await api(`/candidates/${profile.id}/resume`, {method: 'POST', body: data});
+        await api('/candidate/resume', {method: 'POST', body: data});
         if (location.pathname === '/candidate/resume') await resumePage();
         toast('Resume updated successfully');
       } catch (error) {

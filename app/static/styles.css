@@ -366,3 +366,7 @@
 @media(max-width:1360px){.candidate-saas .candidate-hero-card h1{font-size:1.8rem}.candidate-saas .candidate-hero-card p{font-size:.9rem}.candidate-saas .candidate-metrics em{font-size:.68rem}}
 .candidate-saas .candidate-metrics{grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}
 @media(max-width:760px){.candidate-saas .candidate-metrics{grid-template-columns:1fr}}
+/* Supplied HireScore AI artwork used in the shared recruitment sidebar. */
+.sidebar .brand:has(.brand-logo){padding:.15rem .35rem 1.2rem}
+.brand-logo{display:block;width:190px;max-width:100%;height:auto;object-fit:contain;object-position:left center}
+.auth-brand-logo{display:block;width:216px;max-width:100%;height:auto;object-fit:contain;object-position:left center}

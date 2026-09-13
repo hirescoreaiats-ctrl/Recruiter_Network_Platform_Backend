@@ -4,7 +4,7 @@ from .conftest import auth, register
 VENDOR={"company_name":"Test Staffing","country":"IN","city":"Noida","company_type":"Staffing Company"}
 PARTNER={"country":"IN","city":"Bengaluru","industries":["IT"],"skill_areas":["Python"]}
 CANDIDATE={"country":"IN","city":"Pune","current_title":"Developer","total_experience":3,"skills":["Python"],"country_specific_data":{"notice_period":"30 days"}}
-REQ={"title":"Python Developer","description":"Build secure APIs for our recruitment platform and its partners.","country":"IN","state_region":"Karnataka","city":"Bengaluru","work_mode":"Hybrid","employment_type":"Full-Time","min_experience":2,"max_experience":5,"required_skills":["Python","FastAPI"],"preferred_skills":[],"openings":1,"currency":"INR","compensation_type":"Annual CTC","status":"active"}
+REQ={"title":"Python Developer","description":"Build secure APIs for our recruitment platform and its partners.","country":"IN","state_region":"Karnataka","city":"Bengaluru","work_mode":"Hybrid","employment_type":"Full-Time","min_experience":2,"max_experience":5,"required_skills":["Python","FastAPI"],"preferred_skills":[],"openings":1,"currency":"INR","compensation_type":"Annual CTC","status":"active","external_sourcing_approved":True}
 
 
 def test_only_three_roles_and_role_route_security(client):

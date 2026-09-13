@@ -70,9 +70,9 @@ function candidateRegistrationPage() {
       onboarding.draft = {}; onboarding.step = 'role'; onboarding.role = null;
       if (values.career_stage === 'experienced' && resumeInput.files[0]) {
         try {
-          const profile = await api('/candidate/profile'), upload = new FormData();
+          const upload = new FormData();
           upload.append('file', resumeInput.files[0]);
-          await api(`/candidates/${profile.id}/resume`, {method: 'POST', body: upload});
+          await api('/candidate/resume', {method: 'POST', body: upload});
         } catch (uploadError) { toast('Account created, but resume upload failed: ' + uploadError.message, true); }
       }
       let delivery;

@@ -23,12 +23,12 @@ from .models import (
     Application, AuditLog, CandidateAvailability, CandidateEligibility, CandidateEvaluation, CandidateInterest,
     CandidateOwnership, CandidateProfile, Company, CompanyMember, Conversation,
     CandidateJobPreference, DuplicateAttempt, Message, PartnerProfile, Payout, Placement, Requirement,
-    RequirementCommercialTerms, RequirementPartner, RequirementSubmissionSchema, ResumeFile, User,
+    RequirementCommercialTerms, RequirementPartner, RequirementSourcingPlan, RequirementSubmissionSchema, ResumeFile, User,
 )
 from .schemas import (
     AvailabilityIn, CandidateEducationIn, CandidateEmploymentIn, CandidateIn, CandidateOnboardingDraftIn,
     CandidatePreferencesIn, CandidateProfileIn, CandidateProfilePatchIn,
-    ConversationIn, InterestIn, LoginIn, MessageIn, MobileOtpIn,
+    ConversationIn, ExternalSourcingDecisionIn, InterestIn, LoginIn, MessageIn, MobileOtpIn,
     PayoutStatusIn, PlacementStatusIn, RegisterIn, RequirementIn, StatusIn, SubmissionIn,
 )
 from .serializers import candidate_out, requirement_out
@@ -55,7 +55,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="HireScoreAI Recruitment Network MVP", version="0.2.1", lifespan=lifespan)
+app = FastAPI(title="HireScoreAI Recruitment Network", version="0.3.0", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "static"), name="assets")
 mobile_otp_challenges: dict[int, dict] = {}
 
@@ -76,6 +76,57 @@ def terms_out(terms):
     if not terms:
         return None
     return {"id": terms.id, "version": terms.version, "payout_model": terms.payout_model, "payout_amount": terms.payout_amount, "currency": terms.currency, "payment_trigger": terms.payment_trigger, "payment_timeline_days": terms.payment_timeline_days, "replacement_period_days": terms.replacement_period_days, "notes": terms.notes}
+
+
+def sourcing_plan_out(plan: RequirementSourcingPlan):
+    return {
+        "id": plan.id,
+        "requirement_id": plan.requirement_id,
+        "current_stage": plan.current_stage,
+        "portal": {"status": plan.portal_status, "match_count": plan.portal_match_count},
+        "internal_database": {"status": plan.database_status, "match_count": plan.database_match_count},
+        "object_storage": {"status": plan.database_status, "match_count": plan.object_storage_match_count},
+        "external_sourcing": {
+            "status": plan.external_status,
+            "approved": plan.external_status == "approved",
+            "approved_at": plan.approved_at.isoformat() if plan.approved_at else None,
+        },
+        "results": json.loads(plan.result_json or "{}"),
+        "last_scanned_at": plan.last_scanned_at.isoformat() if plan.last_scanned_at else None,
+    }
+
+
+def scan_requirement_supply(db: Session, requirement: Requirement, plan: RequirementSourcingPlan):
+    """Scan owned portal profiles first, then internal inventory and stored resumes."""
+    portal_matches, database_matches, storage_matches = [], [], []
+    candidates = db.scalars(select(CandidateProfile).order_by(CandidateProfile.updated_at.desc())).all()
+    for candidate in candidates:
+        score, _reasons = candidate_requirement_match(candidate, requirement)
+        if score < 50:
+            continue
+        if candidate.user_id is not None:
+            portal_matches.append(score)
+        else:
+            database_matches.append(score)
+        if candidate.resume_file_id:
+            storage_matches.append(score)
+    plan.portal_status = "scanned"
+    plan.portal_match_count = len(portal_matches)
+    plan.database_status = "scanned"
+    plan.database_match_count = len(database_matches)
+    plan.object_storage_match_count = len(storage_matches)
+    plan.current_stage = "external_partner_sourcing" if plan.external_status == "approved" else "awaiting_external_approval"
+    plan.last_scanned_at = datetime.now(timezone.utc)
+    plan.result_json = json.dumps({
+        "scan_order": ["candidate_job_portal", "internal_database", "object_storage", "external_sourcing_partners"],
+        # Pre-consent scans deliberately expose only aggregate supply signals.
+        "source_summaries": {
+            "candidate_job_portal": {"matches": len(portal_matches), "highest_score": max(portal_matches, default=0)},
+            "internal_database": {"matches": len(database_matches), "highest_score": max(database_matches, default=0)},
+            "object_storage": {"matches": len(storage_matches), "highest_score": max(storage_matches, default=0)},
+        },
+    })
+    return plan
 
 
 def availability_out(row):
@@ -382,7 +433,7 @@ def employer_ai_feature(feature: str, user: User = Depends(require_role("require
 @app.post("/api/requirements", status_code=201)
 def create_requirement(data: RequirementIn, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
     company = company_for(db, user.id)
-    r = Requirement(company_id=company.id, created_by_user_id=user.id, **data.model_dump(exclude={"required_skills", "preferred_skills", "submission_schema", "commercial_terms"}), required_skills=json.dumps(data.required_skills), preferred_skills=json.dumps(data.preferred_skills))
+    r = Requirement(company_id=company.id, created_by_user_id=user.id, **data.model_dump(exclude={"required_skills", "preferred_skills", "submission_schema", "commercial_terms", "external_sourcing_approved"}), required_skills=json.dumps(data.required_skills), preferred_skills=json.dumps(data.preferred_skills))
     db.add(r); db.flush()
     fields = data.submission_schema or [
         {"key": "resume", "label": "Resume", "required": True},
@@ -395,11 +446,20 @@ def create_requirement(data: RequirementIn, user: User = Depends(require_role("r
     supplied = data.commercial_terms or {}
     terms = RequirementCommercialTerms(requirement_id=r.id, version=1, payout_model="fixed", payout_amount=float(supplied.get("payout_amount", 0)), currency=supplied.get("currency") or data.currency or ("INR" if data.country == "IN" else "USD"), payment_trigger=supplied.get("payment_trigger", "candidate_joined"), payment_timeline_days=int(supplied.get("payment_timeline_days", 30)), replacement_period_days=int(supplied.get("replacement_period_days", 0)), notes=supplied.get("notes"), created_by_user_id=user.id)
     db.add(terms)
-    audit(db, user.id, "requirement.created", "requirement", r.id, {"status": r.status})
+    plan = RequirementSourcingPlan(
+        requirement_id=r.id,
+        external_status="approved" if data.external_sourcing_approved else "approval_required",
+        approved_by_user_id=user.id if data.external_sourcing_approved else None,
+        approved_at=datetime.now(timezone.utc) if data.external_sourcing_approved else None,
+    )
+    db.add(plan); db.flush()
+    scan_requirement_supply(db, r, plan)
+    audit(db, user.id, "requirement.created", "requirement", r.id, {"status": r.status, "external_sourcing": plan.external_status})
     db.commit()
     output = requirement_out(r, company)
     output["submission_schema"] = fields
     output["commercial_terms"] = terms_out(terms)
+    output["sourcing_plan"] = sourcing_plan_out(plan)
     return output
 
 
@@ -419,7 +479,21 @@ def list_requirements(keyword: str | None = None, country: str | None = None, lo
 @app.get("/api/requirements/mine")
 def my_requirements(user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
     company = company_for(db, user.id)
-    return [requirement_out(r, company) for r in db.scalars(select(Requirement).where(Requirement.company_id == company.id).order_by(Requirement.created_at.desc())).all()]
+    rows = []
+    plans_created = False
+    for r in db.scalars(select(Requirement).where(Requirement.company_id == company.id).order_by(Requirement.created_at.desc())).all():
+        item = requirement_out(r, company)
+        plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+        if not plan:
+            plan = RequirementSourcingPlan(requirement_id=r.id)
+            db.add(plan); db.flush()
+            scan_requirement_supply(db, r, plan)
+            plans_created = True
+        item["sourcing_plan"] = sourcing_plan_out(plan)
+        rows.append(item)
+    if plans_created:
+        db.commit()
+    return rows
 
 
 @app.get("/api/requirements/{requirement_id}")
@@ -431,15 +505,74 @@ def requirement_detail(requirement_id: int, user: User = Depends(current_user), 
     schema = active_submission_schema(db, r.id)
     output["submission_schema"] = json.loads(schema.fields_json) if schema else []
     output["commercial_terms"] = terms_out(active_commercial_terms(db, r.id))
+    plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+    if not plan and user.role == "requirement_vendor":
+        plan = RequirementSourcingPlan(requirement_id=r.id)
+        db.add(plan); db.flush()
+        scan_requirement_supply(db, r, plan)
+        db.commit()
+    output["sourcing_plan"] = sourcing_plan_out(plan) if plan else None
     return output
 
 
 @app.put("/api/requirements/{requirement_id}")
 def update_requirement(requirement_id: int, data: RequirementIn, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
     r = own_requirement(db, user, requirement_id)
-    for k, v in data.model_dump(exclude={"submission_schema", "commercial_terms"}).items(): setattr(r, k, json.dumps(v) if k in {"required_skills", "preferred_skills"} else v)
+    for k, v in data.model_dump(exclude={"submission_schema", "commercial_terms", "external_sourcing_approved"}).items(): setattr(r, k, json.dumps(v) if k in {"required_skills", "preferred_skills"} else v)
+    plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+    if not plan:
+        plan = RequirementSourcingPlan(requirement_id=r.id)
+        db.add(plan); db.flush()
+    plan.external_status = "approved" if data.external_sourcing_approved else "declined"
+    plan.approved_by_user_id = user.id if data.external_sourcing_approved else None
+    plan.approved_at = datetime.now(timezone.utc) if data.external_sourcing_approved else None
+    scan_requirement_supply(db, r, plan)
     audit(db, user.id, "requirement.updated", "requirement", r.id)
-    db.commit(); return requirement_out(r, db.get(Company, r.company_id))
+    db.commit()
+    output = requirement_out(r, db.get(Company, r.company_id))
+    output["sourcing_plan"] = sourcing_plan_out(plan)
+    return output
+
+
+@app.get("/api/requirements/{requirement_id}/sourcing-plan")
+def requirement_sourcing_plan(requirement_id: int, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    r = own_requirement(db, user, requirement_id)
+    plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+    if not plan:
+        plan = RequirementSourcingPlan(requirement_id=r.id)
+        db.add(plan); db.flush()
+        scan_requirement_supply(db, r, plan)
+        db.commit()
+    return sourcing_plan_out(plan)
+
+
+@app.post("/api/requirements/{requirement_id}/sourcing-plan/scan")
+def rescan_requirement_supply(requirement_id: int, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    r = own_requirement(db, user, requirement_id)
+    plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+    if not plan:
+        plan = RequirementSourcingPlan(requirement_id=r.id)
+        db.add(plan); db.flush()
+    scan_requirement_supply(db, r, plan)
+    audit(db, user.id, "requirement.sourcing_scanned", "requirement", r.id, {"stage": plan.current_stage})
+    db.commit()
+    return sourcing_plan_out(plan)
+
+
+@app.put("/api/requirements/{requirement_id}/sourcing-plan/external")
+def decide_external_sourcing(requirement_id: int, data: ExternalSourcingDecisionIn, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    r = own_requirement(db, user, requirement_id)
+    plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+    if not plan:
+        plan = RequirementSourcingPlan(requirement_id=r.id)
+        db.add(plan); db.flush()
+    plan.external_status = "approved" if data.approved else "declined"
+    plan.approved_by_user_id = user.id if data.approved else None
+    plan.approved_at = datetime.now(timezone.utc) if data.approved else None
+    scan_requirement_supply(db, r, plan)
+    audit(db, user.id, "requirement.external_sourcing_decided", "requirement", r.id, {"approved": data.approved})
+    db.commit()
+    return sourcing_plan_out(plan)
 
 
 @app.put("/api/requirements/{requirement_id}/submission-schema")
@@ -471,6 +604,9 @@ def matching_requirements(user: User = Depends(require_role("sourcing_partner"))
     partner = db.scalar(select(PartnerProfile).where(PartnerProfile.user_id == user.id))
     rows = []
     for r in db.scalars(select(Requirement).where(Requirement.status == "active").order_by(Requirement.created_at.desc())).all():
+        plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+        if not plan or plan.external_status != "approved":
+            continue
         score, reasons = partner_requirement_match(partner, r)
         if score > 0:
             item = requirement_out(r, db.get(Company, r.company_id))
@@ -483,6 +619,9 @@ def matching_requirements(user: User = Depends(require_role("sourcing_partner"))
 def start_working(requirement_id: int, user: User = Depends(require_role("sourcing_partner")), db: Session = Depends(get_db)):
     r = db.get(Requirement, requirement_id)
     if not r or r.status != "active": raise HTTPException(404, "Active requirement not found")
+    plan = db.scalar(select(RequirementSourcingPlan).where(RequirementSourcingPlan.requirement_id == r.id))
+    if not plan or plan.external_status != "approved":
+        raise HTTPException(403, "The vendor has not approved external sourcing for this requirement")
     terms = active_commercial_terms(db, r.id)
     if not terms: raise HTTPException(422, "Commercial terms are required before a partner can start work")
     partner = db.scalar(select(PartnerProfile).where(PartnerProfile.user_id == user.id))
@@ -689,6 +828,19 @@ def partner_submission(application_id: int, user: User = Depends(require_role("s
 @app.get("/api/candidate/profile")
 def candidate_profile(user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
     c = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if not c:
+        raise HTTPException(404, "Candidate profile not found")
+    # Recover resume records created by older onboarding clients that completed the
+    # blob upload but did not persist the profile pointer.
+    if not c.resume_file_id:
+        latest_resume = db.scalar(
+            select(ResumeFile)
+            .where(ResumeFile.uploaded_by_user_id == user.id)
+            .order_by(ResumeFile.created_at.desc(), ResumeFile.id.desc())
+        )
+        if latest_resume:
+            c.resume_file_id = latest_resume.id
+            db.commit()
     result = candidate_out(c)
     private_details = json.loads(c.country_specific_data or "{}")
     for key in ("_onboarding_draft", "_profile_completed"):
@@ -1240,12 +1392,7 @@ def candidate_application(application_id: int, user: User = Depends(require_role
     return application_out(db, a)
 
 
-@app.post("/api/candidates/{candidate_id}/resume")
-async def upload_resume(candidate_id: int, file: UploadFile = File(...), user: User = Depends(current_user), db: Session = Depends(get_db)):
-    c = db.get(CandidateProfile, candidate_id)
-    if not c: raise HTTPException(404, "Candidate not found")
-    allowed = c.user_id == user.id or (user.role == "sourcing_partner" and c.created_by_user_id == user.id)
-    if not allowed: raise HTTPException(403, "You cannot update this resume")
+async def store_candidate_resume(c: CandidateProfile, file: UploadFile, user: User, db: Session):
     ext = Path(file.filename or "").suffix.lower()
     types = {".pdf": "application/pdf", ".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
     if ext not in types: raise HTTPException(422, "Resume must be PDF, DOC or DOCX")
@@ -1288,7 +1435,27 @@ async def upload_resume(candidate_id: int, file: UploadFile = File(...), user: U
         if old_path.exists(): old_path.unlink()
         db.delete(old); db.commit()
     return {"id": record.id, "original_name": record.original_name, "size_bytes": record.size_bytes,
+            "content_type": record.content_type, "created_at": record.created_at.isoformat(),
             "extracted_fields": extracted_fields}
+
+
+@app.post("/api/candidate/resume")
+async def upload_own_resume(file: UploadFile = File(...), user: User = Depends(require_role("candidate")), db: Session = Depends(get_db)):
+    candidate = db.scalar(select(CandidateProfile).where(CandidateProfile.user_id == user.id))
+    if not candidate:
+        raise HTTPException(404, "Candidate profile not found")
+    return await store_candidate_resume(candidate, file, user, db)
+
+
+@app.post("/api/candidates/{candidate_id}/resume")
+async def upload_resume(candidate_id: int, file: UploadFile = File(...), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    candidate = db.get(CandidateProfile, candidate_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    allowed = candidate.user_id == user.id or (user.role == "sourcing_partner" and candidate.created_by_user_id == user.id)
+    if not allowed:
+        raise HTTPException(403, "You cannot update this resume")
+    return await store_candidate_resume(candidate, file, user, db)
 
 
 @app.get("/api/resumes/{resume_id}")

@@ -138,6 +138,25 @@ class Requirement(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
+class RequirementSourcingPlan(Base):
+    __tablename__ = "requirement_sourcing_plans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    requirement_id: Mapped[int] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), unique=True, index=True)
+    portal_status: Mapped[str] = mapped_column(String(30), default="pending")
+    portal_match_count: Mapped[int] = mapped_column(Integer, default=0)
+    database_status: Mapped[str] = mapped_column(String(30), default="pending")
+    database_match_count: Mapped[int] = mapped_column(Integer, default=0)
+    object_storage_match_count: Mapped[int] = mapped_column(Integer, default=0)
+    external_status: Mapped[str] = mapped_column(String(30), default="approval_required", index=True)
+    current_stage: Mapped[str] = mapped_column(String(40), default="candidate_portal")
+    result_json: Mapped[str] = mapped_column(Text, default="{}")
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime)
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
 class RequirementPartner(Base):
     __tablename__ = "requirement_partners"
     __table_args__ = (UniqueConstraint("requirement_id", "sourcing_partner_user_id"),)

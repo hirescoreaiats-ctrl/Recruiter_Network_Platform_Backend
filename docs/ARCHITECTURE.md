@@ -43,6 +43,10 @@ The current MVP is a local monolith because it makes the first marketplace loop 
 7. Client reviews evidence and moves the candidate through the pipeline.
 8. Vendor, candidate, and partner report placement independently; payout eligibility follows verification.
 
+## Sourcing distribution order
+
+Requirements are scanned against candidate portal profiles, internal inventory, and resume object storage before external distribution. External sourcing partners are opt-in per requirement and remain blocked until the owning vendor records approval. See `SOURCING_ORCHESTRATION.md` for the API and privacy boundary.
+
 ## Deferred service boundaries
 
 - Email notifications: notification interface only; no existing HireScoreAI email code was touched.
