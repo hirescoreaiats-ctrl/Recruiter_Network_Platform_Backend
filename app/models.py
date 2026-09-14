@@ -188,6 +188,22 @@ class Application(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
+class InterviewSchedule(Base):
+    __tablename__ = "interview_schedules"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    application_id: Mapped[int] = mapped_column(ForeignKey("applications.id", ondelete="CASCADE"), index=True)
+    interview_round: Mapped[str] = mapped_column(String(80), default="Recruiter Screen")
+    interviewer_name: Mapped[str] = mapped_column(String(160))
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    meeting_type: Mapped[str] = mapped_column(String(40), default="Video")
+    meeting_link: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(30), default="scheduled", index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
 class RequirementSubmissionSchema(Base):
     __tablename__ = "requirement_submission_schemas"
     __table_args__ = (UniqueConstraint("requirement_id", "version"),)

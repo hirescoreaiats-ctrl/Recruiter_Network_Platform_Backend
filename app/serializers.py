@@ -20,6 +20,8 @@ def requirement_out(r: Requirement, company: Company | None = None):
         "compensation_min": r.compensation_min, "compensation_max": r.compensation_max,
         "currency": r.currency, "compensation_type": r.compensation_type,
         "status": r.status, "application_deadline": str(r.application_deadline) if r.application_deadline else None,
+        "submission_deadline": str(r.submission_deadline) if r.submission_deadline else None,
+        "interview_process": r.interview_process, "additional_notes": r.additional_notes,
         "created_at": r.created_at.isoformat(), "updated_at": r.updated_at.isoformat(),
     }
 

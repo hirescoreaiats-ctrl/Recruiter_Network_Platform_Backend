@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
@@ -234,6 +234,30 @@ class CandidateProfilePatchIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: Literal["received", "submitted", "under_evaluation", "under_review", "qualified", "ready_for_submission", "shortlisted", "interview", "offer", "selected", "joined", "hold", "rejected"]
+
+
+class RequirementStatusIn(BaseModel):
+    status: Literal["draft", "active", "paused", "closed"]
+
+
+class InterviewScheduleIn(BaseModel):
+    application_id: int
+    interview_round: str = Field(default="Recruiter Screen", min_length=2, max_length=80)
+    interviewer_name: str = Field(min_length=2, max_length=160)
+    scheduled_at: datetime
+    meeting_type: Literal["Video", "Phone", "Onsite"] = "Video"
+    meeting_link: str | None = None
+    notes: str | None = None
+
+
+class InterviewSchedulePatchIn(BaseModel):
+    interview_round: str | None = Field(default=None, min_length=2, max_length=80)
+    interviewer_name: str | None = Field(default=None, min_length=2, max_length=160)
+    scheduled_at: datetime | None = None
+    meeting_type: Literal["Video", "Phone", "Onsite"] | None = None
+    meeting_link: str | None = None
+    status: Literal["pending", "scheduled", "completed", "rescheduled", "cancelled"] | None = None
+    notes: str | None = None
 
 
 class SubmissionIn(BaseModel):

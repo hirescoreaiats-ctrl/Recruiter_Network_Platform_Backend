@@ -471,3 +471,16 @@
   .vendor-row-actions button{white-space:nowrap}
   .vendor-row-actions button.danger{border-color:#fecaca;background:#fff5f5;color:#dc2626}
 }
+
+/* Reference-quality vendor shell, measured against the live recruiter workspace. */
+.shell:has(.vendor-command-center){font-family:ui-sans-serif,system-ui,sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";font-size:15px;color:#1f2937;background:linear-gradient(135deg,#f8fafc,#eef2ff)}
+.shell:has(.vendor-command-center) .sidebar{height:100vh;padding:22px 20px 20px;background:linear-gradient(180deg,#1f2448 0 102px,#111936 102px,#0b1528 100%)}
+.shell:has(.vendor-command-center) .sidebar .brand{height:81px;padding:0 0 21px;border-bottom-color:rgba(255,255,255,.08)}
+.shell:has(.vendor-command-center) .brand-logo{width:178px}
+.shell:has(.vendor-command-center) .vendor-nav-label{margin:13px 8px 27px}
+.shell:has(.vendor-command-center) .nav{height:280px;min-height:280px;overflow-y:auto;overflow-x:hidden;padding-right:4px;scrollbar-width:thin;scrollbar-color:#4e5fb1 transparent}
+.shell:has(.vendor-command-center) .vendor-side-agent{flex:none;margin-top:16px;height:184px;padding:14px 12px 12px}
+.shell:has(.vendor-command-center) .vendor-side-agent p{min-height:68px;margin:10px 0;padding:10px}
+.shell:has(.vendor-command-center) .sidebar-footer{flex:none;margin-top:12px}
+.shell:has(.vendor-command-center) .content{background:linear-gradient(135deg,#f8fafc,#eef2ff)}
+.vendor-command-center{color:#1f2937}.vendor-hero p{font-weight:400}.vendor-title-card h2,.vendor-dashboard-card h3,.vendor-job-name b{color:#111827}.vendor-title-card p,.vendor-dashboard-card>header p{color:#64748b}

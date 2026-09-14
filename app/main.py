@@ -22,14 +22,14 @@ from .database import get_db
 from .models import (
     Application, AuditLog, CandidateAvailability, CandidateEligibility, CandidateEvaluation, CandidateInterest,
     CandidateOwnership, CandidateProfile, Company, CompanyMember, Conversation,
-    CandidateJobPreference, DuplicateAttempt, Message, PartnerProfile, Payout, Placement, Requirement,
+    CandidateJobPreference, DuplicateAttempt, InterviewSchedule, Message, PartnerProfile, Payout, Placement, Requirement,
     RequirementCommercialTerms, RequirementPartner, RequirementSourcingPlan, RequirementSubmissionSchema, ResumeFile, User,
 )
 from .schemas import (
     AvailabilityIn, CandidateEducationIn, CandidateEmploymentIn, CandidateIn, CandidateOnboardingDraftIn,
     CandidatePreferencesIn, CandidateProfileIn, CandidateProfilePatchIn,
-    ConversationIn, ExternalSourcingDecisionIn, InterestIn, LoginIn, MessageIn, MobileOtpIn,
-    PayoutStatusIn, PlacementStatusIn, RegisterIn, RequirementIn, StatusIn, SubmissionIn,
+    ConversationIn, ExternalSourcingDecisionIn, InterestIn, InterviewScheduleIn, InterviewSchedulePatchIn, LoginIn, MessageIn, MobileOtpIn,
+    PayoutStatusIn, PlacementStatusIn, RegisterIn, RequirementIn, RequirementStatusIn, StatusIn, SubmissionIn,
 )
 from .serializers import candidate_out, requirement_out
 from .services.product_access import evaluation_adapter_for_requirement, require_company_feature, user_payload
@@ -496,6 +496,14 @@ def my_requirements(user: User = Depends(require_role("requirement_vendor")), db
     return rows
 
 
+@app.get("/api/public/jobs/{requirement_id}")
+def public_job(requirement_id: int, db: Session = Depends(get_db)):
+    r = db.get(Requirement, requirement_id)
+    if not r or r.status != "active":
+        raise HTTPException(404, "Job is not accepting applications")
+    return requirement_out(r, db.get(Company, r.company_id))
+
+
 @app.get("/api/requirements/{requirement_id}")
 def requirement_detail(requirement_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     r = db.get(Requirement, requirement_id)
@@ -532,6 +540,16 @@ def update_requirement(requirement_id: int, data: RequirementIn, user: User = De
     output = requirement_out(r, db.get(Company, r.company_id))
     output["sourcing_plan"] = sourcing_plan_out(plan)
     return output
+
+
+@app.patch("/api/requirements/{requirement_id}/status")
+def update_requirement_status(requirement_id: int, data: RequirementStatusIn, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    r = own_requirement(db, user, requirement_id)
+    previous = r.status
+    r.status = data.status
+    audit(db, user.id, "requirement.status_changed", "requirement", r.id, {"from": previous, "to": data.status})
+    db.commit()
+    return requirement_out(r, db.get(Company, r.company_id))
 
 
 @app.get("/api/requirements/{requirement_id}/sourcing-plan")
@@ -1247,6 +1265,56 @@ def update_status(application_id: int, data: StatusIn, user: User = Depends(requ
     previous = a.status; a.status = data.status
     audit(db, user.id, "candidate.status_changed", "application", a.id, {"from": previous, "to": data.status})
     db.commit(); return application_out(db, a)
+
+
+def interview_out(db: Session, row: InterviewSchedule):
+    application = db.get(Application, row.application_id)
+    candidate = db.get(CandidateProfile, application.candidate_profile_id)
+    requirement = db.get(Requirement, application.requirement_id)
+    return {
+        "id": row.id, "application_id": row.application_id,
+        "candidate": {"id": candidate.id, "full_name": candidate.full_name, "email": candidate.email},
+        "requirement": {"id": requirement.id, "title": requirement.title, "company": db.get(Company, requirement.company_id).name},
+        "interview_round": row.interview_round, "interviewer_name": row.interviewer_name,
+        "scheduled_at": row.scheduled_at.isoformat(), "meeting_type": row.meeting_type,
+        "meeting_link": row.meeting_link, "status": row.status, "notes": row.notes,
+        "created_at": row.created_at.isoformat(), "updated_at": row.updated_at.isoformat(),
+    }
+
+
+@app.get("/api/vendor/interviews")
+def list_vendor_interviews(user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    company = company_for(db, user.id)
+    rows = db.scalars(select(InterviewSchedule).join(Application).join(Requirement).where(Requirement.company_id == company.id).order_by(InterviewSchedule.scheduled_at)).all()
+    return [interview_out(db, row) for row in rows]
+
+
+@app.post("/api/vendor/interviews", status_code=201)
+def create_vendor_interview(data: InterviewScheduleIn, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    application = db.get(Application, data.application_id)
+    if not application:
+        raise HTTPException(404, "Submission not found")
+    own_requirement(db, user, application.requirement_id)
+    row = InterviewSchedule(created_by_user_id=user.id, **data.model_dump())
+    application.status = "interview"
+    db.add(row); db.flush()
+    audit(db, user.id, "interview.scheduled", "interview", row.id, {"application_id": application.id})
+    db.commit()
+    return interview_out(db, row)
+
+
+@app.patch("/api/vendor/interviews/{interview_id}")
+def update_vendor_interview(interview_id: int, data: InterviewSchedulePatchIn, user: User = Depends(require_role("requirement_vendor")), db: Session = Depends(get_db)):
+    row = db.get(InterviewSchedule, interview_id)
+    if not row:
+        raise HTTPException(404, "Interview not found")
+    application = db.get(Application, row.application_id)
+    own_requirement(db, user, application.requirement_id)
+    for key, value in data.model_dump(exclude_unset=True).items():
+        setattr(row, key, value)
+    audit(db, user.id, "interview.updated", "interview", row.id, data.model_dump(exclude_unset=True))
+    db.commit()
+    return interview_out(db, row)
 
 
 @app.put("/api/candidates/{candidate_id}/availability")
